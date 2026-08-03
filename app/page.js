@@ -275,7 +275,7 @@ function EmptyState({ text }) {
 
 function CarsView({ data, update }) {
   const [editing, setEditing] = useState(null);
-  const empty = { nr: "", marca: "", model: "", tarif: 157, driverId: "", status: "activa" };
+  const empty = { nr: "", marca: "", model: "", an: "", tarif: 157, driverId: "", status: "activa" };
 
   const save = (car) => {
     update((prev) => {
@@ -298,7 +298,7 @@ function CarsView({ data, update }) {
       ) : (
         <div className="card" style={{ overflowX: "auto" }}>
           <table>
-            <thead><tr><th>Nr.</th><th>Marcă / Model</th><th>Tarif/zi</th><th>Șofer</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Nr.</th><th>Marcă / Model</th><th>An</th><th>Tarif/zi</th><th>Șofer</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {data.cars.map((c) => {
                 const driver = data.drivers.find((d) => d.id === c.driverId);
@@ -306,6 +306,7 @@ function CarsView({ data, update }) {
                   <tr key={c.id}>
                     <td style={{ fontWeight: 600 }}>{c.nr}</td>
                     <td>{c.marca} {c.model}</td>
+                    <td className="mono">{c.an || <span style={{ color: "var(--muted)" }}>—</span>}</td>
                     <td className="mono">{fmtMoney(c.tarif)}</td>
                     <td>{driver ? driver.nume : <span style={{ color: "var(--muted)" }}>nealocat</span>}</td>
                     <td><CarStatusPill status={c.status} /></td>
@@ -350,6 +351,7 @@ function CarForm({ car, drivers, onSave, onCancel }) {
         <div className="field" style={{ flex: 1 }}><label>Marcă</label><input value={f.marca} onChange={(e) => set("marca", e.target.value)} placeholder="BMW" /></div>
         <div className="field" style={{ flex: 1 }}><label>Model</label><input value={f.model} onChange={(e) => set("model", e.target.value)} placeholder="520D" /></div>
       </div>
+      <div className="field"><label>An fabricație</label><input type="number" value={f.an || ""} onChange={(e) => set("an", e.target.value)} placeholder="2018" /></div>
       <div className="field"><label>Tarif fix pe zi (lei)</label><input type="number" value={f.tarif} onChange={(e) => set("tarif", Number(e.target.value))} /></div>
       <div className="field">
         <label>Șofer alocat</label>
