@@ -276,6 +276,10 @@ function EmptyState({ text }) {
 function CarsView({ data, update }) {
   const [editing, setEditing] = useState(null);
   const empty = { nr: "", marca: "", model: "", an: "", tarif: 157, driverId: "", status: "activa" };
+  const sortedCars = useMemo(
+    () => [...data.cars].sort((a, b) => a.nr.localeCompare(b.nr, "ro", { sensitivity: "base", numeric: true })),
+    [data.cars]
+  );
 
   const save = (car) => {
     update((prev) => {
@@ -300,7 +304,7 @@ function CarsView({ data, update }) {
           <table>
             <thead><tr><th>Nr.</th><th>Marcă / Model</th><th>An</th><th>Tarif/zi</th><th>Șofer</th><th>Status</th><th></th></tr></thead>
             <tbody>
-              {data.cars.map((c) => {
+              {sortedCars.map((c) => {
                 const driver = data.drivers.find((d) => d.id === c.driverId);
                 return (
                   <tr key={c.id}>
@@ -800,7 +804,7 @@ function ReportsView({ data }) {
   );
 }
 
-/* ============================== MODAL ============================= */
+/* ============================== MODAL ============================== */
 
 function Modal({ title, children, onClose }) {
   return (
