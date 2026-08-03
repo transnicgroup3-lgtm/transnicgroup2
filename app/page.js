@@ -8,9 +8,8 @@ import {
 
 /* ---------------------------------------------------------------
    Taxi Fleet Pro Cloud (web version)
-   Same app as the Claude artifact, but data is stored in Supabase
-   via /api/data, so it's the same data on every device that opens
-   this site — phone, tablet, computer, no Claude account needed.
+   Data stored in Supabase via /api/data — same data on every
+   device that opens this site.
 ---------------------------------------------------------------- */
 
 const uid = () => Math.random().toString(36).slice(2, 10);
@@ -20,7 +19,7 @@ const MONTHS_RO = ["Ianuarie","Februarie","Martie","Aprilie","Mai","Iunie","Iuli
 const emptyData = () => ({
   cars: [],
   drivers: [],
-  payments: {},
+  payments: {},   // key `${date}__${carId}` -> {date, carId, dueAmount, paidAmount, status}
   expenses: [],
   incomes: [],
 });
@@ -29,9 +28,14 @@ function fmtMoney(n) {
   const v = Number(n) || 0;
   return v.toLocaleString("ro-RO", { maximumFractionDigits: 0 }) + " lei";
 }
+function daysInMonth(year, month) { return new Date(year, month + 1, 0).getDate(); }
+function monthKey(y, m) { return `${y}-${String(m + 1).padStart(2, "0")}`; }
 
-function daysInMonth(year, month) {
-  return new Date(year, month + 1, 0).getDate();
+function statusOf(due, paid) {
+  if (paid == null) return "pending";
+  if (paid <= 0) return "unpaid";
+  if (paid >= due) return "paid";
+  return "partial";
 }
 
 export default function TaxiFleetPro() {
@@ -111,7 +115,7 @@ function Shell({ tab, setTab, children, loading, saveError }) {
   ];
 
   return (
-    <div style={{ "--bg": "#14171c", "--panel": "#1c2029", "--amber": "#f2b705", "--green": "#2bb673", "--red": "#e5484d", "--text": "#eae7e0", "--muted": "#8b93a1", "--border": "#2a303b" }}
+    <div style={{ "--bg": "#14171c", "--panel": "#1c2029", "--amber": "#f2b705", "--orange": "#f2841c", "--green": "#2bb673", "--red": "#e5484d", "--text": "#eae7e0", "--muted": "#8b93a1", "--border": "#2a303b" }}
       className="tfp-root">
       <style>{`
         .tfp-root{background:var(--bg);color:var(--text);min-height:100vh;font-family:'Inter',system-ui,sans-serif;display:flex;flex-direction:column}
@@ -148,6 +152,8 @@ function Shell({ tab, setTab, children, loading, saveError }) {
         .field{margin-bottom:12px}
         .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600}
         .save-warn{font-size:12px;color:var(--red);display:flex;align-items:center;gap:5px}
+        .quickbtn{flex:1;padding:9px 6px;border-radius:8px;border:1px solid var(--border);background:#ffffff0d;color:var(--text);font-size:12.5px;font-weight:700;cursor:pointer}
+        .quickbtn:hover{background:#ffffff1a}
       `}</style>
 
       <div className="tfp-header">
@@ -181,19 +187,21 @@ function Dashboard({ data, setTab }) {
   const activeCars = data.cars.filter((c) => c.status === "activa").length;
   const inService = data.cars.filter((c) => c.status === "service").length;
 
-  const todayPayments = data.cars.map((c) => {
+  const todayRows = data.cars.map((c) => {
     const p = data.payments[`${today}__${c.id}`];
-    return { car: c, status: p ? p.status : "pending", amount: p ? p.amount : c.tarif };
+    const due = p ? p.dueAmount : c.tarif;
+    const paid = p ? p.paidAmount : null;
+    return { car: c, status: statusOf(due, paid), due, paid };
   });
-  const incomeToday = todayPayments.filter((p) => p.status === "paid").reduce((s, p) => s + Number(p.amount || 0), 0);
+  const incomeToday = todayRows.reduce((s, r) => s + (r.paid || 0), 0);
   const expensesToday = data.expenses.filter((e) => e.data === today).reduce((s, e) => s + Number(e.suma || 0), 0);
   const profitToday = incomeToday - expensesToday;
-  const unpaidToday = todayPayments.filter((p) => p.status === "unpaid").length;
+  const problemToday = todayRows.filter((r) => r.status === "unpaid" || r.status === "partial").length;
 
   const stats = [
     { label: "Mașini", value: data.cars.length, icon: Car, sub: `${activeCars} active · ${inService} service` },
     { label: "Șoferi", value: data.drivers.length, icon: Users, sub: `${data.drivers.filter((d) => d.activ).length} activi` },
-    { label: "Încasări azi", value: fmtMoney(incomeToday), icon: Wallet, sub: `${todayPayments.filter((p) => p.status === "paid").length}/${data.cars.length} plătite`, mono: true },
+    { label: "Încasări azi", value: fmtMoney(incomeToday), icon: Wallet, sub: `${todayRows.filter((r) => r.status === "paid").length}/${data.cars.length} plătite integral`, mono: true },
     { label: "Profit azi", value: fmtMoney(profitToday), icon: profitToday >= 0 ? TrendingUp : TrendingDown, sub: `cheltuieli ${fmtMoney(expensesToday)}`, mono: true, accent: profitToday >= 0 },
   ];
 
@@ -212,10 +220,10 @@ function Dashboard({ data, setTab }) {
         ))}
       </div>
 
-      {unpaidToday > 0 && (
+      {problemToday > 0 && (
         <div className="card" style={{ borderColor: "#e5484d55", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
           <AlertTriangle size={17} color="var(--red)" />
-          <div style={{ fontSize: 13.5 }}>{unpaidToday} mașin{unpaidToday === 1 ? "ă nu a" : "i nu au"} sdat (plătit) astăzi.</div>
+          <div style={{ fontSize: 13.5 }}>{problemToday} mașin{problemToday === 1 ? "ă are" : "i au"} restanță astăzi.</div>
           <button className="btn" style={{ marginLeft: "auto" }} onClick={() => setTab("calendar")}>Deschide calendar</button>
         </div>
       )}
@@ -226,16 +234,17 @@ function Dashboard({ data, setTab }) {
           <EmptyState text="Adaugă prima mașină din secțiunea Mașini." />
         ) : (
           <table>
-            <thead><tr><th>Mașină</th><th>Șofer</th><th>Tarif</th><th>Stare</th></tr></thead>
+            <thead><tr><th>Mașină</th><th>Șofer</th><th>Tarif</th><th>Achitat</th><th>Stare</th></tr></thead>
             <tbody>
-              {todayPayments.map(({ car, status, amount }) => {
+              {todayRows.map(({ car, status, due, paid }) => {
                 const driver = data.drivers.find((d) => d.id === car.driverId);
                 return (
                   <tr key={car.id}>
                     <td>{car.nr} <span style={{ color: "var(--muted)" }}>· {car.marca} {car.model}</span></td>
                     <td>{driver ? driver.nume : <span style={{ color: "var(--muted)" }}>—</span>}</td>
-                    <td className="mono">{fmtMoney(amount)}</td>
-                    <td><StatusPill status={status} /></td>
+                    <td className="mono">{fmtMoney(due)}</td>
+                    <td className="mono">{paid == null ? "—" : fmtMoney(paid)}</td>
+                    <td><StatusPill status={status} restanta={due - (paid || 0)} /></td>
                   </tr>
                 );
               })}
@@ -247,10 +256,11 @@ function Dashboard({ data, setTab }) {
   );
 }
 
-function StatusPill({ status }) {
+function StatusPill({ status, restanta }) {
   const map = {
-    paid: { label: "Sdat", bg: "#2bb67322", color: "var(--green)" },
-    unpaid: { label: "Nu a sdat", bg: "#e5484d22", color: "var(--red)" },
+    paid: { label: "Achitat", bg: "#2bb67322", color: "var(--green)" },
+    unpaid: { label: "Neachitat", bg: "#e5484d22", color: "var(--red)" },
+    partial: { label: `Mai are ${fmtMoney(restanta)}`, bg: "#f2841c22", color: "var(--orange)" },
     pending: { label: "Așteptăm", bg: "#f2b70522", color: "var(--amber)" },
   };
   const m = map[status] || map.pending;
@@ -274,9 +284,7 @@ function CarsView({ data, update }) {
     });
     setEditing(null);
   };
-  const remove = (id) => {
-    update((prev) => ({ ...prev, cars: prev.cars.filter((c) => c.id !== id) }));
-  };
+  const remove = (id) => update((prev) => ({ ...prev, cars: prev.cars.filter((c) => c.id !== id) }));
 
   return (
     <div>
@@ -455,6 +463,7 @@ function CalendarView({ data, update }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
+  const [sel, setSel] = useState(null); // {day, car}
   const nDays = daysInMonth(year, month);
   const days = Array.from({ length: nDays }, (_, i) => i + 1);
 
@@ -467,19 +476,19 @@ function CalendarView({ data, update }) {
 
   const keyFor = (day, carId) => `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}__${carId}`;
 
-  const cycle = (day, car) => {
+  const saveDay = (day, car, paidAmount) => {
     const dateISO = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
     const k = keyFor(day, car.id);
     update((prev) => {
       const cur = prev.payments[k];
-      const order = ["pending", "paid", "unpaid"];
-      const idx = order.indexOf(cur ? cur.status : "pending");
-      const nextStatus = order[(idx + 1) % order.length];
+      const dueAmount = cur ? cur.dueAmount : car.tarif;
+      const status = statusOf(dueAmount, paidAmount);
       return {
         ...prev,
-        payments: { ...prev.payments, [k]: { status: nextStatus, amount: cur ? cur.amount : car.tarif, date: dateISO, carId: car.id } },
+        payments: { ...prev.payments, [k]: { date: dateISO, carId: car.id, dueAmount, paidAmount, status } },
       };
     });
+    setSel(null);
   };
 
   if (data.cars.length === 0) {
@@ -488,14 +497,15 @@ function CalendarView({ data, update }) {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <button className="btn" style={{ padding: 8 }} onClick={() => changeMonth(-1)}><ChevronLeft size={16} /></button>
         <div className="disp" style={{ fontSize: 18, fontWeight: 700, minWidth: 170, textAlign: "center" }}>{MONTHS_RO[month]} {year}</div>
         <button className="btn" style={{ padding: 8 }} onClick={() => changeMonth(1)}><ChevronRight size={16} /></button>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 12, fontSize: 12, color: "var(--muted)" }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Dot color="var(--green)" />Sdat</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Dot color="var(--red)" />Nu a sdat</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Dot color="var(--amber)" />Așteptăm</span>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 12, fontSize: 12, color: "var(--muted)", flexWrap: "wrap" }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Dot color="var(--green)" />Achitat</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Dot color="var(--orange)" />Parțial</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Dot color="var(--red)" />Neachitat</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Dot color="#3a4150" />Așteptăm</span>
         </div>
       </div>
 
@@ -514,12 +524,15 @@ function CalendarView({ data, update }) {
                 {days.map((d) => {
                   const p = data.payments[keyFor(d, car.id)];
                   const status = p ? p.status : "pending";
-                  const colors = { paid: "var(--green)", unpaid: "var(--red)", pending: "#3a4150" };
+                  const colors = { paid: "var(--green)", unpaid: "var(--red)", partial: "var(--orange)", pending: "#3a4150" };
+                  const title = p
+                    ? `${fmtMoney(p.paidAmount)} din ${fmtMoney(p.dueAmount)}` + (p.dueAmount > p.paidAmount ? ` — mai are ${fmtMoney(p.dueAmount - p.paidAmount)}` : "")
+                    : `Tarif ${fmtMoney(car.tarif)} — neatins`;
                   return (
                     <td key={d} style={{ padding: 3, textAlign: "center" }}>
                       <button
-                        onClick={() => cycle(d, car)}
-                        title={fmtMoney(p ? p.amount : car.tarif)}
+                        onClick={() => setSel({ day: d, car })}
+                        title={title}
                         style={{ width: 26, height: 26, borderRadius: 6, border: "none", cursor: "pointer", background: colors[status], opacity: status === "pending" ? 0.55 : 1 }}
                       />
                     </td>
@@ -530,8 +543,51 @@ function CalendarView({ data, update }) {
           </tbody>
         </table>
       </div>
-      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>Click pe o celulă pentru a schimba starea zilei (Așteptăm → Sdat → Nu a sdat). Suma implicită este tariful zilnic al mașinii.</div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>Click pe o celulă pentru a marca suma achitată în acea zi. Dacă e mai mică decât tariful, restanța se calculează și se afișează automat.</div>
+
+      {sel && (
+        <DayPaymentModal
+          day={sel.day} car={sel.car} year={year} month={month}
+          record={data.payments[keyFor(sel.day, sel.car.id)]}
+          onSave={(amount) => saveDay(sel.day, sel.car, amount)}
+          onClose={() => setSel(null)}
+        />
+      )}
     </div>
+  );
+}
+
+function DayPaymentModal({ day, car, year, month, record, onSave, onClose }) {
+  const due = record ? record.dueAmount : car.tarif;
+  const [amount, setAmount] = useState(record ? record.paidAmount : car.tarif);
+  const restanta = Math.max(due - Number(amount || 0), 0);
+  const dateLabel = `${String(day).padStart(2, "0")} ${MONTHS_RO[month]} ${year}`;
+
+  return (
+    <Modal onClose={onClose} title={`${car.nr} — ${dateLabel}`}>
+      <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14 }}>Tarif fix pe zi: <span className="mono" style={{ color: "var(--text)" }}>{fmtMoney(due)}</span></div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button className="quickbtn" onClick={() => setAmount(due)}>Achitat integral</button>
+        <button className="quickbtn" onClick={() => setAmount(0)}>Neachitat</button>
+      </div>
+
+      <div className="field">
+        <label>Sumă efectiv achitată (lei)</label>
+        <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} />
+      </div>
+
+      {restanta > 0 && (
+        <div style={{ fontSize: 13, color: "var(--orange)", marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
+          <AlertTriangle size={14} /> Mai are de dat: <span className="mono" style={{ fontWeight: 700 }}>{fmtMoney(restanta)}</span>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="btn primary" style={{ flex: 1, justifyContent: "center" }} onClick={() => onSave(Number(amount || 0))}><Check size={15} />Salvează</button>
+        <button className="btn" onClick={onClose}>Anulează</button>
+      </div>
+    </Modal>
   );
 }
 
@@ -541,8 +597,6 @@ function Dot({ color }) {
 
 /* ============================== FINANCE ============================== */
 
-function monthKey(y, m) { return `${y}-${String(m + 1).padStart(2, "0")}`; }
-
 function FinanceView({ data, update }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -551,19 +605,15 @@ function FinanceView({ data, update }) {
   const [showExpense, setShowExpense] = useState(false);
   const [showIncome, setShowIncome] = useState(false);
 
-  const calendarIncome = Object.values(data.payments)
-    .filter((p) => p.status === "paid" && p.date && p.date.startsWith(mk))
-    .reduce((s, p) => s + Number(p.amount || 0), 0);
+  const monthPayments = Object.values(data.payments).filter((p) => p.date && p.date.startsWith(mk));
+  const calendarIncome = monthPayments.reduce((s, p) => s + Number(p.paidAmount || 0), 0);
+  const restante = monthPayments.reduce((s, p) => s + Math.max(Number(p.dueAmount || 0) - Number(p.paidAmount || 0), 0), 0);
 
   const extraIncome = data.incomes.filter((i) => i.data.startsWith(mk)).reduce((s, i) => s + Number(i.suma || 0), 0);
   const expensesMonth = data.expenses.filter((e) => e.data.startsWith(mk));
   const totalExpenses = expensesMonth.reduce((s, e) => s + Number(e.suma || 0), 0);
   const totalIncome = calendarIncome + extraIncome;
   const profit = totalIncome - totalExpenses;
-
-  const restante = Object.values(data.payments)
-    .filter((p) => p.status === "unpaid" && p.date && p.date.startsWith(mk))
-    .reduce((s, p) => s + Number(p.amount || 0), 0);
 
   const addExpense = (e) => update((prev) => ({ ...prev, expenses: [...prev.expenses, { ...e, id: uid() }] }));
   const addIncome = (i) => update((prev) => ({ ...prev, incomes: [...prev.incomes, { ...i, id: uid() }] }));
@@ -589,7 +639,7 @@ function FinanceView({ data, update }) {
         <MiniStat label="Venituri" value={fmtMoney(totalIncome)} color="var(--green)" />
         <MiniStat label="Cheltuieli" value={fmtMoney(totalExpenses)} color="var(--red)" />
         <MiniStat label="Profit" value={fmtMoney(profit)} color={profit >= 0 ? "var(--green)" : "var(--red)"} />
-        <MiniStat label="Restanțe (neplătit)" value={fmtMoney(restante)} color="var(--amber)" />
+        <MiniStat label="Restanțe" value={fmtMoney(restante)} color="var(--orange)" />
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -704,10 +754,10 @@ function ReportsView({ data }) {
 
   const perCar = useMemo(() => data.cars.map((car) => {
     const pays = Object.values(data.payments).filter((p) => p.carId === car.id && p.date && p.date.startsWith(mk));
-    const paid = pays.filter((p) => p.status === "paid").reduce((s, p) => s + Number(p.amount || 0), 0);
-    const unpaid = pays.filter((p) => p.status === "unpaid").reduce((s, p) => s + Number(p.amount || 0), 0);
+    const paid = pays.reduce((s, p) => s + Number(p.paidAmount || 0), 0);
+    const restanta = pays.reduce((s, p) => s + Math.max(Number(p.dueAmount || 0) - Number(p.paidAmount || 0), 0), 0);
     const driver = data.drivers.find((d) => d.id === car.driverId);
-    return { car, driver, paid, unpaid };
+    return { car, driver, paid, restanta };
   }).sort((a, b) => b.paid - a.paid), [data, mk]);
 
   const changeMonth = (delta) => {
@@ -732,12 +782,12 @@ function ReportsView({ data }) {
           <table>
             <thead><tr><th>Mașină</th><th>Șofer</th><th>Încasat</th><th>Restanțe</th></tr></thead>
             <tbody>
-              {perCar.map(({ car, driver, paid, unpaid }) => (
+              {perCar.map(({ car, driver, paid, restanta }) => (
                 <tr key={car.id}>
                   <td style={{ fontWeight: 600 }}>{car.nr}</td>
                   <td>{driver ? driver.nume : "—"}</td>
                   <td className="mono" style={{ color: "var(--green)" }}>{fmtMoney(paid)}</td>
-                  <td className="mono" style={{ color: unpaid > 0 ? "var(--red)" : "var(--muted)" }}>{fmtMoney(unpaid)}</td>
+                  <td className="mono" style={{ color: restanta > 0 ? "var(--orange)" : "var(--muted)" }}>{fmtMoney(restanta)}</td>
                 </tr>
               ))}
             </tbody>
