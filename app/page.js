@@ -800,7 +800,7 @@ function ReportsView({ data }) {
   );
 }
 
-/* ============================== MODAL ============================== */
+/* ============================== MODAL ============================= */
 
 function Modal({ title, children, onClose }) {
   return (
