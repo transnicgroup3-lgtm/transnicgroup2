@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Car, Users, Calendar as CalendarIcon, Wallet, BarChart3, Plus, X,
   Trash2, Pencil, Check, AlertTriangle, ChevronLeft, ChevronRight,
-  Phone, Loader2, TrendingUp, TrendingDown, Gauge, Shield
+  Phone, Loader2, TrendingUp, TrendingDown, Gauge, Shield, Wrench
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
@@ -23,6 +23,7 @@ const emptyData = () => ({
   expenses: [],
   incomes: [],
   insurances: [], // {id, carId, tip, dataExpirare, cost, notes}
+  inspections: [], // {id, carId, dataExpirare}
 });
 
 function fmtMoney(n) {
@@ -98,6 +99,7 @@ export default function TaxiFleetPro() {
       {tab === "drivers" && <DriversView data={data} update={update} />}
       {tab === "calendar" && <CalendarView data={data} update={update} />}
       {tab === "insurance" && <InsuranceView data={data} update={update} />}
+      {tab === "inspection" && <InspectionView data={data} update={update} />}
       {tab === "finance" && <FinanceView data={data} update={update} />}
       {tab === "reports" && <ReportsView data={data} />}
     </Shell>
@@ -113,6 +115,7 @@ function Shell({ tab, setTab, children, loading, saveError }) {
     { id: "drivers", label: "Șoferi", icon: Users },
     { id: "calendar", label: "Calendar", icon: CalendarIcon },
     { id: "insurance", label: "Asigurări", icon: Shield },
+    { id: "inspection", label: "Revizie tehnică", icon: Wrench },
     { id: "finance", label: "Finanțe", icon: Wallet },
     { id: "reports", label: "Rapoarte", icon: BarChart3 },
   ];
@@ -194,6 +197,10 @@ function Dashboard({ data, setTab }) {
     const d = daysUntil(ins.dataExpirare);
     return d != null && d <= 30;
   });
+  const inspectionAlerts = data.inspections.filter((insp) => {
+    const d = daysUntil(insp.dataExpirare);
+    return d != null && d <= 30;
+  });
 
   const todayRows = data.cars.map((c) => {
     const p = data.payments[`${today}__${c.id}`];
@@ -241,6 +248,14 @@ function Dashboard({ data, setTab }) {
           <Shield size={17} color="var(--orange)" />
           <div style={{ fontSize: 13.5 }}>{insuranceAlerts.length} asigurăr{insuranceAlerts.length === 1 ? "e expiră" : "i expiră"} în curând sau au expirat.</div>
           <button className="btn" style={{ marginLeft: "auto" }} onClick={() => setTab("insurance")}>Deschide asigurări</button>
+        </div>
+      )}
+
+      {inspectionAlerts.length > 0 && (
+        <div className="card" style={{ borderColor: "#f2841c55", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+          <Wrench size={17} color="var(--orange)" />
+          <div style={{ fontSize: 13.5 }}>{inspectionAlerts.length} revizi{inspectionAlerts.length === 1 ? "e tehnică expiră" : "i tehnice expiră"} în curând sau au expirat.</div>
+          <button className="btn" style={{ marginLeft: "auto" }} onClick={() => setTab("inspection")}>Deschide revizii</button>
         </div>
       )}
 
@@ -729,6 +744,94 @@ function InsuranceForm({ ins, cars, onSave, onCancel }) {
         </select>
       </div>
       <div className="field"><label>Data expirării</label><input type="date" value={f.dataExpirare} onChange={(e) => set("dataExpirare", e.target.value)} /></div>
+      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        <button className="btn primary" style={{ flex: 1, justifyContent: "center" }} onClick={() => f.carId && f.dataExpirare && onSave(f)}><Check size={15} />Salvează</button>
+        <button className="btn" onClick={onCancel}>Anulează</button>
+      </div>
+    </div>
+  );
+}
+
+/* ============================== TECHNICAL INSPECTION ============================== */
+
+function InspectionView({ data, update }) {
+  const [editing, setEditing] = useState(null);
+  const empty = { carId: data.cars[0] ? data.cars[0].id : "", dataExpirare: "" };
+
+  const save = (insp) => {
+    update((prev) => {
+      const inspections = insp.id
+        ? prev.inspections.map((i) => (i.id === insp.id ? insp : i))
+        : [...prev.inspections, { ...insp, id: uid() }];
+      return { ...prev, inspections };
+    });
+    setEditing(null);
+  };
+  const remove = (id) => update((prev) => ({ ...prev, inspections: prev.inspections.filter((i) => i.id !== id) }));
+
+  const sorted = useMemo(
+    () => [...data.inspections].sort((a, b) => (a.dataExpirare || "").localeCompare(b.dataExpirare || "")),
+    [data.inspections]
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <div className="disp" style={{ fontSize: 18, fontWeight: 700 }}>Revizie tehnică ({data.inspections.length})</div>
+        <button className="btn primary" disabled={data.cars.length === 0} onClick={() => setEditing({ ...empty })}><Plus size={15} />Adaugă</button>
+      </div>
+
+      {data.cars.length === 0 ? (
+        <div className="card"><EmptyState text="Adaugă mai întâi o mașină, apoi îi poți atașa o revizie tehnică." /></div>
+      ) : data.inspections.length === 0 ? (
+        <div className="card"><EmptyState text="Nicio revizie tehnică înregistrată încă." /></div>
+      ) : (
+        <div className="card" style={{ overflowX: "auto" }}>
+          <table>
+            <thead><tr><th>Mașină</th><th>Valabilă până la</th><th>Stare</th><th></th></tr></thead>
+            <tbody>
+              {sorted.map((insp) => {
+                const car = data.cars.find((c) => c.id === insp.carId);
+                const days = daysUntil(insp.dataExpirare);
+                const status = insuranceStatus(days);
+                return (
+                  <tr key={insp.id}>
+                    <td style={{ fontWeight: 600 }}>{car ? car.nr : <span style={{ color: "var(--muted)" }}>mașină ștearsă</span>}</td>
+                    <td className="mono">{insp.dataExpirare || "—"}</td>
+                    <td><InsuranceStatusPill status={status} days={days} /></td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      <button className="btn" style={{ padding: 6, marginRight: 6 }} onClick={() => setEditing(insp)}><Pencil size={14} /></button>
+                      <button className="btn danger" style={{ padding: 6 }} onClick={() => remove(insp.id)}><Trash2 size={14} /></button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {editing && (
+        <Modal onClose={() => setEditing(null)} title={editing.id ? "Editează" : "Adaugă revizie tehnică"}>
+          <InspectionForm insp={editing} cars={data.cars} onSave={save} onCancel={() => setEditing(null)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function InspectionForm({ insp, cars, onSave, onCancel }) {
+  const [f, setF] = useState(insp);
+  const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  return (
+    <div>
+      <div className="field">
+        <label>Mașină</label>
+        <select value={f.carId} onChange={(e) => set("carId", e.target.value)}>
+          {cars.map((c) => <option key={c.id} value={c.id}>{c.nr} — {c.marca} {c.model}</option>)}
+        </select>
+      </div>
+      <div className="field"><label>Valabilă până la</label><input type="date" value={f.dataExpirare} onChange={(e) => set("dataExpirare", e.target.value)} /></div>
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
         <button className="btn primary" style={{ flex: 1, justifyContent: "center" }} onClick={() => f.carId && f.dataExpirare && onSave(f)}><Check size={15} />Salvează</button>
         <button className="btn" onClick={onCancel}>Anulează</button>
