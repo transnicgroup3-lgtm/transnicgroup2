@@ -160,6 +160,7 @@ function Shell({ tab, setTab, children, loading, saveError }) {
         .save-warn{font-size:12px;color:var(--red);display:flex;align-items:center;gap:5px}
         .quickbtn{flex:1;padding:9px 6px;border-radius:8px;border:1px solid var(--border);background:#ffffff0d;color:var(--text);font-size:12.5px;font-weight:700;cursor:pointer}
         .quickbtn:hover{background:#ffffff1a}
+        .tfp-footer{padding:16px 20px;border-top:1px solid var(--border);text-align:center;font-size:12px;color:var(--muted)}
       `}</style>
 
       <div className="tfp-header">
@@ -182,6 +183,8 @@ function Shell({ tab, setTab, children, loading, saveError }) {
       </div>
 
       <div className="tfp-body">{children}</div>
+
+      <div className="tfp-footer">© {new Date().getFullYear()} Nichita Ivanov. Toate drepturile rezervate.</div>
     </div>
   );
 }
