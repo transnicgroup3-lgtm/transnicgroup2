@@ -191,7 +191,7 @@ function Shell({ tab, setTab, children, loading, saveError }) {
 
       <div className="tfp-body">{children}</div>
 
-      <div className="tfp-footer">© {new Date().getFullYear()} Nichita Ivanov. Toate drepturile rezervate.</div>
+      <div className="tfp-footer">© {new Date().getFullYear()}Toate drepturile rezervate.</div>
     </div>
   );
 }
