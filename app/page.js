@@ -32,6 +32,13 @@ function fmtMoney(n) {
 }
 function daysInMonth(year, month) { return new Date(year, month + 1, 0).getDate(); }
 function monthKey(y, m) { return `${y}-${String(m + 1).padStart(2, "0")}`; }
+function dailyRate(car, year, month) {
+  if (car.tarifPeriod === "luna") return Math.round((Number(car.tarif) || 0) / daysInMonth(year, month));
+  return Number(car.tarif) || 0;
+}
+function fmtRate(car) {
+  return car.tarifPeriod === "luna" ? `${fmtMoney(car.tarif)}/lună` : `${fmtMoney(car.tarif)}/zi`;
+}
 
 function statusOf(due, paid) {
   if (paid == null) return "pending";
@@ -207,7 +214,8 @@ function Dashboard({ data, setTab }) {
 
   const todayRows = data.cars.map((c) => {
     const p = data.payments[`${today}__${c.id}`];
-    const due = p ? p.dueAmount : c.tarif;
+    const now = new Date();
+    const due = p ? p.dueAmount : dailyRate(c, now.getFullYear(), now.getMonth());
     const paid = p ? p.paidAmount : null;
     return { car: c, status: statusOf(due, paid), due, paid };
   });
@@ -309,7 +317,7 @@ function EmptyState({ text }) {
 
 function CarsView({ data, update }) {
   const [editing, setEditing] = useState(null);
-  const empty = { nr: "", marca: "", model: "", an: "", tarif: 157, driverId: "", status: "activa" };
+  const empty = { nr: "", marca: "", model: "", an: "", tarif: 157, tarifPeriod: "zi", driverId: "", status: "activa" };
   const sortedCars = useMemo(
     () => [...data.cars].sort((a, b) => a.nr.localeCompare(b.nr, "ro", { sensitivity: "base", numeric: true })),
     [data.cars]
@@ -345,7 +353,7 @@ function CarsView({ data, update }) {
                     <td style={{ fontWeight: 600 }}>{c.nr}</td>
                     <td>{c.marca} {c.model}</td>
                     <td className="mono">{c.an || <span style={{ color: "var(--muted)" }}>—</span>}</td>
-                    <td className="mono">{fmtMoney(c.tarif)}</td>
+                    <td className="mono">{fmtRate(c)}</td>
                     <td>{driver ? driver.nume : <span style={{ color: "var(--muted)" }}>nealocat</span>}</td>
                     <td><CarStatusPill status={c.status} /></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
@@ -390,7 +398,19 @@ function CarForm({ car, drivers, onSave, onCancel }) {
         <div className="field" style={{ flex: 1 }}><label>Model</label><input value={f.model} onChange={(e) => set("model", e.target.value)} placeholder="520D" /></div>
       </div>
       <div className="field"><label>An fabricație</label><input type="number" value={f.an || ""} onChange={(e) => set("an", e.target.value)} placeholder="2018" /></div>
-      <div className="field"><label>Tarif fix pe zi (lei)</label><input type="number" value={f.tarif} onChange={(e) => set("tarif", Number(e.target.value))} /></div>
+      <div className="field">
+        <label>Tarif</label>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input type="number" style={{ flex: 1 }} value={f.tarif} onChange={(e) => set("tarif", Number(e.target.value))} />
+          <select style={{ flex: 1 }} value={f.tarifPeriod || "zi"} onChange={(e) => set("tarifPeriod", e.target.value)}>
+            <option value="zi">lei / zi</option>
+            <option value="luna">lei / lună</option>
+          </select>
+        </div>
+        {f.tarifPeriod === "luna" && (
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 5 }}>Echivalent aproximativ: {fmtMoney(Math.round((Number(f.tarif) || 0) / 30))}/zi, folosit în calendar.</div>
+        )}
+      </div>
       <div className="field">
         <label>Șofer alocat</label>
         <select value={f.driverId} onChange={(e) => set("driverId", e.target.value)}>
@@ -521,7 +541,7 @@ function CalendarView({ data, update }) {
     const k = keyFor(day, car.id);
     update((prev) => {
       const cur = prev.payments[k];
-      const dueAmount = cur ? cur.dueAmount : car.tarif;
+      const dueAmount = cur ? cur.dueAmount : dailyRate(car, year, month);
       const status = statusOf(dueAmount, paidAmount);
       return {
         ...prev,
@@ -567,7 +587,7 @@ function CalendarView({ data, update }) {
                   const colors = { paid: "var(--green)", unpaid: "var(--red)", partial: "var(--orange)", pending: "#3a4150" };
                   const title = p
                     ? `${fmtMoney(p.paidAmount)} din ${fmtMoney(p.dueAmount)}` + (p.dueAmount > p.paidAmount ? ` — mai are ${fmtMoney(p.dueAmount - p.paidAmount)}` : "")
-                    : `Tarif ${fmtMoney(car.tarif)} — neatins`;
+                    : `Tarif ${fmtMoney(dailyRate(car, year, month))}/zi — neatins`;
                   return (
                     <td key={d} style={{ padding: 3, textAlign: "center" }}>
                       <button
@@ -589,6 +609,7 @@ function CalendarView({ data, update }) {
         <DayPaymentModal
           day={sel.day} car={sel.car} year={year} month={month}
           record={data.payments[keyFor(sel.day, sel.car.id)]}
+          fallbackDue={dailyRate(sel.car, year, month)}
           onSave={(amount) => saveDay(sel.day, sel.car, amount)}
           onClose={() => setSel(null)}
         />
@@ -597,9 +618,9 @@ function CalendarView({ data, update }) {
   );
 }
 
-function DayPaymentModal({ day, car, year, month, record, onSave, onClose }) {
-  const due = record ? record.dueAmount : car.tarif;
-  const [amount, setAmount] = useState(record ? record.paidAmount : car.tarif);
+function DayPaymentModal({ day, car, year, month, record, fallbackDue, onSave, onClose }) {
+  const due = record ? record.dueAmount : fallbackDue;
+  const [amount, setAmount] = useState(record ? record.paidAmount : fallbackDue);
   const restanta = Math.max(due - Number(amount || 0), 0);
   const dateLabel = `${String(day).padStart(2, "0")} ${MONTHS_RO[month]} ${year}`;
 
