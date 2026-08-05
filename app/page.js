@@ -635,7 +635,7 @@ function insuranceStatus(days) {
 
 function InsuranceView({ data, update }) {
   const [editing, setEditing] = useState(null);
-  const empty = { carId: data.cars[0] ? data.cars[0].id : "", tip: "RCA", dataExpirare: "", cost: "", notes: "" };
+  const empty = { carId: data.cars[0] ? data.cars[0].id : "", tip: "Asigurare simplă", dataExpirare: "" };
 
   const save = (ins) => {
     update((prev) => {
@@ -667,7 +667,7 @@ function InsuranceView({ data, update }) {
       ) : (
         <div className="card" style={{ overflowX: "auto" }}>
           <table>
-            <thead><tr><th>Mașină</th><th>Tip</th><th>Expiră</th><th>Stare</th><th>Cost</th><th></th></tr></thead>
+            <thead><tr><th>Mașină</th><th>Tip</th><th>Expiră</th><th>Stare</th><th></th></tr></thead>
             <tbody>
               {sorted.map((ins) => {
                 const car = data.cars.find((c) => c.id === ins.carId);
@@ -679,7 +679,6 @@ function InsuranceView({ data, update }) {
                     <td>{ins.tip}</td>
                     <td className="mono">{ins.dataExpirare || "—"}</td>
                     <td><InsuranceStatusPill status={status} days={days} /></td>
-                    <td className="mono">{ins.cost ? fmtMoney(ins.cost) : "—"}</td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn" style={{ padding: 6, marginRight: 6 }} onClick={() => setEditing(ins)}><Pencil size={14} /></button>
                       <button className="btn danger" style={{ padding: 6 }} onClick={() => remove(ins.id)}><Trash2 size={14} /></button>
@@ -726,14 +725,12 @@ function InsuranceForm({ ins, cars, onSave, onCancel }) {
       <div className="field">
         <label>Tip</label>
         <select value={f.tip} onChange={(e) => set("tip", e.target.value)}>
-          {["RCA", "CASCO", "ITP", "Vinietă", "Altele"].map((t) => <option key={t}>{t}</option>)}
+          {["Asigurare simplă", "Asigurare taxi"].map((t) => <option key={t}>{t}</option>)}
         </select>
       </div>
       <div className="field"><label>Data expirării</label><input type="date" value={f.dataExpirare} onChange={(e) => set("dataExpirare", e.target.value)} /></div>
-      <div className="field"><label>Cost (lei, opțional)</label><input type="number" value={f.cost} onChange={(e) => set("cost", e.target.value)} /></div>
-      <div className="field"><label>Notițe (opțional)</label><input value={f.notes} onChange={(e) => set("notes", e.target.value)} placeholder="Ex: polița X, agent Y" /></div>
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        <button className="btn primary" style={{ flex: 1, justifyContent: "center" }} onClick={() => f.carId && f.dataExpirare && onSave({ ...f, cost: f.cost ? Number(f.cost) : "" })}><Check size={15} />Salvează</button>
+        <button className="btn primary" style={{ flex: 1, justifyContent: "center" }} onClick={() => f.carId && f.dataExpirare && onSave(f)}><Check size={15} />Salvează</button>
         <button className="btn" onClick={onCancel}>Anulează</button>
       </div>
     </div>
