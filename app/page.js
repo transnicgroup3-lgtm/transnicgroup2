@@ -175,7 +175,7 @@ function Shell({ tab, setTab, children, loading, saveError }) {
           <div className="tfp-badge"><Car size={16} color="#14171c" /></div>
           <div>
             <div className="disp" style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.1 }}>Taxi Fleet Pro</div>
-            <div style={{ fontSize: 11, color: "var(--muted)" }}>sincronizat automat, telefon + calculator</div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>Gestionare Taxi</div>
           </div>
         </div>
         {saveError && <div className="save-warn"><AlertTriangle size={14} />Salvarea a eșuat</div>}
