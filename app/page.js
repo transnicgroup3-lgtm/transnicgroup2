@@ -168,6 +168,20 @@ function Shell({ tab, setTab, children, loading, saveError }) {
         .quickbtn{flex:1;padding:9px 6px;border-radius:8px;border:1px solid var(--border);background:#ffffff0d;color:var(--text);font-size:12.5px;font-weight:700;cursor:pointer}
         .quickbtn:hover{background:#ffffff1a}
         .tfp-footer{padding:16px 20px;border-top:1px solid var(--border);text-align:center;font-size:12px;color:var(--muted)}
+        .finance-grid{grid-template-columns:1fr 1fr}
+        .daycell{padding:0;text-align:center}
+        .daybtn{width:26px;height:26px;border-radius:6px;border:none;cursor:pointer}
+        .quickrow{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:10px;background:#ffffff08;margin-bottom:8px}
+        .quickrow .btn{padding:11px 12px}
+        @media (max-width: 680px){
+          .finance-grid{grid-template-columns:1fr}
+          .tfp-navbtn{padding:11px 14px;font-size:14px}
+          .btn{padding:11px 15px;font-size:14.5px}
+          .daybtn{width:34px;height:34px;border-radius:8px}
+          .tfp-body{padding:14px}
+          th,td{padding:10px 8px}
+          input,select,textarea{padding:11px 12px;font-size:15px}
+        }
       `}</style>
 
       <div className="tfp-header">
@@ -175,7 +189,7 @@ function Shell({ tab, setTab, children, loading, saveError }) {
           <div className="tfp-badge"><Car size={16} color="#14171c" /></div>
           <div>
             <div className="disp" style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.1 }}>Taxi Fleet Pro</div>
-            <div style={{ fontSize: 11, color: "var(--muted)" }}>Gestionare Taxi</div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>sincronizat automat, telefon + calculator</div>
           </div>
         </div>
         {saveError && <div className="save-warn"><AlertTriangle size={14} />Salvarea a eșuat</div>}
@@ -191,7 +205,7 @@ function Shell({ tab, setTab, children, loading, saveError }) {
 
       <div className="tfp-body">{children}</div>
 
-      <div className="tfp-footer">© {new Date().getFullYear()}Toate drepturile rezervate.</div>
+      <div className="tfp-footer">© {new Date().getFullYear()} Nichita Ivanov. Toate drepturile rezervate.</div>
     </div>
   );
 }
@@ -524,6 +538,7 @@ function CalendarView({ data, update }) {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [sel, setSel] = useState(null); // {day, car}
+  const [view, setView] = useState("azi"); // 'azi' | 'luna'
   const nDays = daysInMonth(year, month);
   const days = Array.from({ length: nDays }, (_, i) => i + 1);
 
@@ -536,18 +551,20 @@ function CalendarView({ data, update }) {
 
   const keyFor = (day, carId) => `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}__${carId}`;
 
-  const saveDay = (day, car, paidAmount) => {
-    const dateISO = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    const k = keyFor(day, car.id);
+  const commitPayment = (dateISO, car, paidAmount) => {
+    const k = `${dateISO}__${car.id}`;
+    const [y, m] = dateISO.split("-").map(Number);
     update((prev) => {
       const cur = prev.payments[k];
-      const dueAmount = cur ? cur.dueAmount : dailyRate(car, year, month);
+      const dueAmount = cur ? cur.dueAmount : dailyRate(car, y, m - 1);
       const status = statusOf(dueAmount, paidAmount);
-      return {
-        ...prev,
-        payments: { ...prev.payments, [k]: { date: dateISO, carId: car.id, dueAmount, paidAmount, status } },
-      };
+      return { ...prev, payments: { ...prev.payments, [k]: { date: dateISO, carId: car.id, dueAmount, paidAmount, status } } };
     });
+  };
+
+  const saveDay = (day, car, paidAmount) => {
+    const dateISO = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    commitPayment(dateISO, car, paidAmount);
     setSel(null);
   };
 
@@ -555,6 +572,80 @@ function CalendarView({ data, update }) {
     return <div className="card"><EmptyState text="Adaugă cel puțin o mașină pentru a folosi calendarul de sdare." /></div>;
   }
 
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+        <button className={"btn" + (view === "azi" ? " primary" : "")} style={{ flex: 1, justifyContent: "center" }} onClick={() => setView("azi")}>Astăzi, rapid</button>
+        <button className={"btn" + (view === "luna" ? " primary" : "")} style={{ flex: 1, justifyContent: "center" }} onClick={() => setView("luna")}>Calendar lună</button>
+      </div>
+
+      {view === "azi" ? (
+        <QuickTodayView data={data} commitPayment={commitPayment} />
+      ) : (
+        <MonthGridView
+          data={data} year={year} month={month} days={days} keyFor={keyFor}
+          changeMonth={changeMonth} onCellClick={(day, car) => setSel({ day, car })}
+        />
+      )}
+
+      {sel && (
+        <DayPaymentModal
+          day={sel.day} car={sel.car} year={year} month={month}
+          record={data.payments[keyFor(sel.day, sel.car.id)]}
+          fallbackDue={dailyRate(sel.car, year, month)}
+          onSave={(amount) => saveDay(sel.day, sel.car, amount)}
+          onClose={() => setSel(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function QuickTodayView({ data, commitPayment }) {
+  const today = todayISO();
+  const now = new Date();
+  const [sel, setSel] = useState(null); // car for custom-amount modal
+
+  const rows = data.cars.map((c) => {
+    const p = data.payments[`${today}__${c.id}`];
+    const due = p ? p.dueAmount : dailyRate(c, now.getFullYear(), now.getMonth());
+    const paid = p ? p.paidAmount : null;
+    return { car: c, due, paid, status: statusOf(due, paid) };
+  });
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+        {new Date().toLocaleDateString("ro-RO", { weekday: "long", day: "numeric", month: "long" })}
+      </div>
+      {rows.map(({ car, due, paid, status }) => {
+        const driver = data.drivers.find((d) => d.id === car.driverId);
+        return (
+          <div className="quickrow" key={car.id}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700 }}>{car.nr}</div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>{driver ? driver.nume : "nealocat"} · {fmtMoney(due)}</div>
+            </div>
+            <StatusPill status={status} restanta={due - (paid || 0)} />
+            <button className="btn" onClick={() => commitPayment(today, car, due)}><Check size={14} />Achitat</button>
+            <button className="btn danger" onClick={() => setSel(car)}>Altă sumă</button>
+          </div>
+        );
+      })}
+      {sel && (
+        <DayPaymentModal
+          day={new Date().getDate()} car={sel} year={now.getFullYear()} month={now.getMonth()}
+          record={data.payments[`${today}__${sel.id}`]}
+          fallbackDue={dailyRate(sel, now.getFullYear(), now.getMonth())}
+          onSave={(amount) => { commitPayment(today, sel, amount); setSel(null); }}
+          onClose={() => setSel(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+function MonthGridView({ data, year, month, days, keyFor, changeMonth, onCellClick }) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
@@ -591,9 +682,10 @@ function CalendarView({ data, update }) {
                   return (
                     <td key={d} style={{ padding: 3, textAlign: "center" }}>
                       <button
-                        onClick={() => setSel({ day: d, car })}
+                        onClick={() => onCellClick(d, car)}
                         title={title}
-                        style={{ width: 26, height: 26, borderRadius: 6, border: "none", cursor: "pointer", background: colors[status], opacity: status === "pending" ? 0.55 : 1 }}
+                        className="daybtn"
+                        style={{ background: colors[status], opacity: status === "pending" ? 0.55 : 1 }}
                       />
                     </td>
                   );
@@ -604,16 +696,6 @@ function CalendarView({ data, update }) {
         </table>
       </div>
       <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>Click pe o celulă pentru a marca suma achitată în acea zi. Dacă e mai mică decât tariful, restanța se calculează și se afișează automat.</div>
-
-      {sel && (
-        <DayPaymentModal
-          day={sel.day} car={sel.car} year={year} month={month}
-          record={data.payments[keyFor(sel.day, sel.car.id)]}
-          fallbackDue={dailyRate(sel.car, year, month)}
-          onSave={(amount) => saveDay(sel.day, sel.car, amount)}
-          onClose={() => setSel(null)}
-        />
-      )}
     </div>
   );
 }
@@ -911,7 +993,7 @@ function FinanceView({ data, update }) {
         <MiniStat label="Restanțe" value={fmtMoney(restante)} color="var(--orange)" />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+      <div className="finance-grid" style={{ display: "grid", gap: 14 }}>
         <div className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div className="disp" style={{ fontWeight: 700 }}>Venituri extra</div>
