@@ -189,7 +189,7 @@ function Shell({ tab, setTab, children, loading, saveError }) {
           <div className="tfp-badge"><Car size={16} color="#14171c" /></div>
           <div>
             <div className="disp" style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.1 }}>Taxi Fleet Pro</div>
-            <div style={{ fontSize: 11, color: "var(--muted)" }}>sincronizat automat, telefon + calculator</div>
+            <div style={{ fontSize: 11, color: "var(--muted)" }}>Gestionare taxi</div>
           </div>
         </div>
         {saveError && <div className="save-warn"><AlertTriangle size={14} />Salvarea a eșuat</div>}
@@ -539,8 +539,17 @@ function CalendarView({ data, update }) {
   const [month, setMonth] = useState(now.getMonth());
   const [sel, setSel] = useState(null); // {day, car}
   const [view, setView] = useState("azi"); // 'azi' | 'luna'
+  const [search, setSearch] = useState("");
   const nDays = daysInMonth(year, month);
   const days = Array.from({ length: nDays }, (_, i) => i + 1);
+
+  const filteredCars = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return [...data.cars]
+      .filter((c) => !term || c.nr.toLowerCase().includes(term) || `${c.marca} ${c.model}`.toLowerCase().includes(term))
+      .sort((a, b) => a.nr.localeCompare(b.nr, "ro", { sensitivity: "base", numeric: true }));
+  }, [data.cars, search]);
+  const filteredData = { ...data, cars: filteredCars };
 
   const changeMonth = (delta) => {
     let m = month + delta, y = year;
@@ -575,15 +584,23 @@ function CalendarView({ data, update }) {
   return (
     <div>
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <button className={"btn" + (view === "azi" ? " primary" : "")} style={{ flex: 1, justifyContent: "center" }} onClick={() => setView("azi")}>Astăzi, rapid</button>
+        <button className={"btn" + (view === "azi" ? " primary" : "")} style={{ flex: 1, justifyContent: "center" }} onClick={() => setView("azi")}>Astăzi</button>
         <button className={"btn" + (view === "luna" ? " primary" : "")} style={{ flex: 1, justifyContent: "center" }} onClick={() => setView("luna")}>Calendar lună</button>
       </div>
 
+      <div className="field" style={{ marginBottom: 14 }}>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Caută mașină după număr, marcă sau model…"
+        />
+      </div>
+
       {view === "azi" ? (
-        <QuickTodayView data={data} commitPayment={commitPayment} />
+        <QuickTodayView data={filteredData} commitPayment={commitPayment} />
       ) : (
         <MonthGridView
-          data={data} year={year} month={month} days={days} keyFor={keyFor}
+          data={filteredData} year={year} month={month} days={days} keyFor={keyFor}
           changeMonth={changeMonth} onCellClick={(day, car) => setSel({ day, car })}
         />
       )}
@@ -618,6 +635,7 @@ function QuickTodayView({ data, commitPayment }) {
       <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
         {new Date().toLocaleDateString("ro-RO", { weekday: "long", day: "numeric", month: "long" })}
       </div>
+      {rows.length === 0 && <EmptyState text="Nicio mașină găsită pentru căutarea asta." />}
       {rows.map(({ car, due, paid, status }) => {
         const driver = data.drivers.find((d) => d.id === car.driverId);
         return (
@@ -661,6 +679,7 @@ function MonthGridView({ data, year, month, days, keyFor, changeMonth, onCellCli
       </div>
 
       <div className="card" style={{ overflowX: "auto", padding: 10 }}>
+        {data.cars.length === 0 ? <EmptyState text="Nicio mașină găsită pentru căutarea asta." /> : (
         <table>
           <thead>
             <tr>
@@ -694,6 +713,7 @@ function MonthGridView({ data, year, month, days, keyFor, changeMonth, onCellCli
             ))}
           </tbody>
         </table>
+        )}
       </div>
       <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>Click pe o celulă pentru a marca suma achitată în acea zi. Dacă e mai mică decât tariful, restanța se calculează și se afișează automat.</div>
     </div>
