@@ -39,9 +39,6 @@ function dailyRate(car, year, month) {
 function fmtRate(car) {
   return car.tarifPeriod === "luna" ? `${fmtMoney(car.tarif)}/lună` : `${fmtMoney(car.tarif)}/zi`;
 }
-function askDelete(message, fn) {
-  if (window.confirm(message)) fn();
-}
 
 function statusOf(due, paid) {
   if (paid == null) return "pending";
@@ -334,6 +331,7 @@ function EmptyState({ text }) {
 
 function CarsView({ data, update }) {
   const [editing, setEditing] = useState(null);
+  const [confirm, setConfirm] = useState(null);
   const empty = { nr: "", marca: "", model: "", an: "", tarif: 157, tarifPeriod: "zi", driverId: "", status: "activa" };
   const sortedCars = useMemo(
     () => [...data.cars].sort((a, b) => a.nr.localeCompare(b.nr, "ro", { sensitivity: "base", numeric: true })),
@@ -375,7 +373,7 @@ function CarsView({ data, update }) {
                     <td><CarStatusPill status={c.status} /></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn" style={{ padding: 6, marginRight: 6 }} onClick={() => setEditing(c)}><Pencil size={14} /></button>
-                      <button className="btn danger" style={{ padding: 6 }} onClick={() => askDelete(`Ștergi mașina ${c.nr}? Această acțiune nu poate fi anulată.`, () => remove(c.id))}><Trash2 size={14} /></button>
+                      <button className="btn danger" style={{ padding: 6 }} onClick={() => setConfirm({ message: `Ștergi mașina ${c.nr}? Această acțiune nu poate fi anulată.`, action: () => remove(c.id) })}><Trash2 size={14} /></button>
                     </td>
                   </tr>
                 );
@@ -389,6 +387,9 @@ function CarsView({ data, update }) {
         <Modal onClose={() => setEditing(null)} title={editing.id ? "Editează mașina" : "Adaugă mașină"}>
           <CarForm car={editing} drivers={data.drivers} onSave={save} onCancel={() => setEditing(null)} />
         </Modal>
+      )}
+      {confirm && (
+        <ConfirmModal message={confirm.message} onCancel={() => setConfirm(null)} onConfirm={() => { confirm.action(); setConfirm(null); }} />
       )}
     </div>
   );
@@ -455,6 +456,7 @@ function CarForm({ car, drivers, onSave, onCancel }) {
 
 function DriversView({ data, update }) {
   const [editing, setEditing] = useState(null);
+  const [confirm, setConfirm] = useState(null);
   const empty = { nume: "", telefon: "", activ: true };
 
   const save = (drv) => {
@@ -496,7 +498,7 @@ function DriversView({ data, update }) {
                     <td><span className="pill" style={{ background: d.activ ? "#2bb67322" : "#8b93a122", color: d.activ ? "var(--green)" : "var(--muted)" }}>{d.activ ? "Activ" : "Inactiv"}</span></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn" style={{ padding: 6, marginRight: 6 }} onClick={() => setEditing(d)}><Pencil size={14} /></button>
-                      <button className="btn danger" style={{ padding: 6 }} onClick={() => askDelete(`Ștergi șoferul ${d.nume}? Această acțiune nu poate fi anulată.`, () => remove(d.id))}><Trash2 size={14} /></button>
+                      <button className="btn danger" style={{ padding: 6 }} onClick={() => setConfirm({ message: `Ștergi șoferul ${d.nume}? Această acțiune nu poate fi anulată.`, action: () => remove(d.id) })}><Trash2 size={14} /></button>
                     </td>
                   </tr>
                 );
@@ -510,6 +512,9 @@ function DriversView({ data, update }) {
         <Modal onClose={() => setEditing(null)} title={editing.id ? "Editează șofer" : "Adaugă șofer"}>
           <DriverForm driver={editing} onSave={save} onCancel={() => setEditing(null)} />
         </Modal>
+      )}
+      {confirm && (
+        <ConfirmModal message={confirm.message} onCancel={() => setConfirm(null)} onConfirm={() => { confirm.action(); setConfirm(null); }} />
       )}
     </div>
   );
@@ -790,6 +795,7 @@ function insuranceStatus(days) {
 
 function InsuranceView({ data, update }) {
   const [editing, setEditing] = useState(null);
+  const [confirm, setConfirm] = useState(null);
   const empty = { carId: data.cars[0] ? data.cars[0].id : "", tip: "Asigurare simplă", dataExpirare: "" };
 
   const save = (ins) => {
@@ -836,7 +842,7 @@ function InsuranceView({ data, update }) {
                     <td><InsuranceStatusPill status={status} days={days} /></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn" style={{ padding: 6, marginRight: 6 }} onClick={() => setEditing(ins)}><Pencil size={14} /></button>
-                      <button className="btn danger" style={{ padding: 6 }} onClick={() => askDelete("Ștergi această asigurare? Această acțiune nu poate fi anulată.", () => remove(ins.id))}><Trash2 size={14} /></button>
+                      <button className="btn danger" style={{ padding: 6 }} onClick={() => setConfirm({ message: "Ștergi această asigurare? Această acțiune nu poate fi anulată.", action: () => remove(ins.id) })}><Trash2 size={14} /></button>
                     </td>
                   </tr>
                 );
@@ -850,6 +856,9 @@ function InsuranceView({ data, update }) {
         <Modal onClose={() => setEditing(null)} title={editing.id ? "Editează" : "Adaugă asigurare/document"}>
           <InsuranceForm ins={editing} cars={data.cars} onSave={save} onCancel={() => setEditing(null)} />
         </Modal>
+      )}
+      {confirm && (
+        <ConfirmModal message={confirm.message} onCancel={() => setConfirm(null)} onConfirm={() => { confirm.action(); setConfirm(null); }} />
       )}
     </div>
   );
@@ -896,6 +905,7 @@ function InsuranceForm({ ins, cars, onSave, onCancel }) {
 
 function InspectionView({ data, update }) {
   const [editing, setEditing] = useState(null);
+  const [confirm, setConfirm] = useState(null);
   const empty = { carId: data.cars[0] ? data.cars[0].id : "", dataExpirare: "" };
 
   const save = (insp) => {
@@ -941,7 +951,7 @@ function InspectionView({ data, update }) {
                     <td><InsuranceStatusPill status={status} days={days} /></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn" style={{ padding: 6, marginRight: 6 }} onClick={() => setEditing(insp)}><Pencil size={14} /></button>
-                      <button className="btn danger" style={{ padding: 6 }} onClick={() => askDelete("Ștergi această revizie tehnică? Această acțiune nu poate fi anulată.", () => remove(insp.id))}><Trash2 size={14} /></button>
+                      <button className="btn danger" style={{ padding: 6 }} onClick={() => setConfirm({ message: "Ștergi această revizie tehnică? Această acțiune nu poate fi anulată.", action: () => remove(insp.id) })}><Trash2 size={14} /></button>
                     </td>
                   </tr>
                 );
@@ -955,6 +965,9 @@ function InspectionView({ data, update }) {
         <Modal onClose={() => setEditing(null)} title={editing.id ? "Editează" : "Adaugă revizie tehnică"}>
           <InspectionForm insp={editing} cars={data.cars} onSave={save} onCancel={() => setEditing(null)} />
         </Modal>
+      )}
+      {confirm && (
+        <ConfirmModal message={confirm.message} onCancel={() => setConfirm(null)} onConfirm={() => { confirm.action(); setConfirm(null); }} />
       )}
     </div>
   );
@@ -989,6 +1002,7 @@ function FinanceView({ data, update }) {
   const mk = monthKey(year, month);
   const [showExpense, setShowExpense] = useState(false);
   const [showIncome, setShowIncome] = useState(false);
+  const [confirm, setConfirm] = useState(null);
 
   const monthPayments = Object.values(data.payments).filter((p) => p.date && p.date.startsWith(mk));
   const calendarIncome = monthPayments.reduce((s, p) => s + Number(p.paidAmount || 0), 0);
@@ -1040,7 +1054,7 @@ function FinanceView({ data, update }) {
                 {data.incomes.filter((i) => i.data.startsWith(mk)).map((i) => (
                   <tr key={i.id}>
                     <td>{i.descriere}</td><td className="mono" style={{ color: "var(--green)" }}>{fmtMoney(i.suma)}</td>
-                    <td style={{ textAlign: "right" }}><button className="btn danger" style={{ padding: 5 }} onClick={() => askDelete("Ștergi acest venit? Această acțiune nu poate fi anulată.", () => delIncome(i.id))}><Trash2 size={13} /></button></td>
+                    <td style={{ textAlign: "right" }}><button className="btn danger" style={{ padding: 5 }} onClick={() => setConfirm({ message: "Ștergi acest venit? Această acțiune nu poate fi anulată.", action: () => delIncome(i.id) })}><Trash2 size={13} /></button></td>
                   </tr>
                 ))}
               </tbody>
@@ -1060,7 +1074,7 @@ function FinanceView({ data, update }) {
                   <tr key={e.id}>
                     <td>{e.descriere}<div style={{ fontSize: 11, color: "var(--muted)" }}>{e.categorie}</div></td>
                     <td className="mono" style={{ color: "var(--red)" }}>{fmtMoney(e.suma)}</td>
-                    <td style={{ textAlign: "right" }}><button className="btn danger" style={{ padding: 5 }} onClick={() => askDelete("Ștergi această cheltuială? Această acțiune nu poate fi anulată.", () => delExpense(e.id))}><Trash2 size={13} /></button></td>
+                    <td style={{ textAlign: "right" }}><button className="btn danger" style={{ padding: 5 }} onClick={() => setConfirm({ message: "Ștergi această cheltuială? Această acțiune nu poate fi anulată.", action: () => delExpense(e.id) })}><Trash2 size={13} /></button></td>
                   </tr>
                 ))}
               </tbody>
@@ -1078,6 +1092,9 @@ function FinanceView({ data, update }) {
         <Modal onClose={() => setShowIncome(false)} title="Adaugă venit extra">
           <IncomeForm onSave={(i) => { addIncome(i); setShowIncome(false); }} onCancel={() => setShowIncome(false)} />
         </Modal>
+      )}
+      {confirm && (
+        <ConfirmModal message={confirm.message} onCancel={() => setConfirm(null)} onConfirm={() => { confirm.action(); setConfirm(null); }} />
       )}
     </div>
   );
@@ -1179,6 +1196,24 @@ function ReportsView({ data }) {
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function ConfirmModal({ message, onConfirm, onCancel }) {
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" style={{ maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <AlertTriangle size={20} color="var(--red)" />
+          <div className="disp" style={{ fontWeight: 700, fontSize: 16 }}>Confirmă ștergerea</div>
+        </div>
+        <div style={{ fontSize: 13.5, marginBottom: 18 }}>{message}</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn danger" style={{ flex: 1, justifyContent: "center" }} onClick={onConfirm}><Trash2 size={15} />Șterge</button>
+          <button className="btn" style={{ flex: 1, justifyContent: "center" }} onClick={onCancel}>Anulează</button>
+        </div>
+      </div>
     </div>
   );
 }
