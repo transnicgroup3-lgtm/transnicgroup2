@@ -19,7 +19,7 @@ const MONTHS_RO = ["Ianuarie","Februarie","Martie","Aprilie","Mai","Iunie","Iuli
 const emptyData = () => ({
   cars: [],
   drivers: [],
-  payments: {},   // key `${date}__${carId}` -> {date, carId, dueAmount, paidAmount, status}
+  payments: {},   // key `${date}__${carId}` -> {date, carId, dueAmount, paidCash, paidCard, paidAmount, status}
   expenses: [],
   incomes: [],
   insurances: [], // {id, carId, tip, dataExpirare, cost, notes}
@@ -560,20 +560,21 @@ function CalendarView({ data, update }) {
 
   const keyFor = (day, carId) => `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}__${carId}`;
 
-  const commitPayment = (dateISO, car, paidAmount) => {
+  const commitPayment = (dateISO, car, paidCash, paidCard) => {
     const k = `${dateISO}__${car.id}`;
     const [y, m] = dateISO.split("-").map(Number);
+    const paidAmount = Number(paidCash || 0) + Number(paidCard || 0);
     update((prev) => {
       const cur = prev.payments[k];
       const dueAmount = cur ? cur.dueAmount : dailyRate(car, y, m - 1);
       const status = statusOf(dueAmount, paidAmount);
-      return { ...prev, payments: { ...prev.payments, [k]: { date: dateISO, carId: car.id, dueAmount, paidAmount, status } } };
+      return { ...prev, payments: { ...prev.payments, [k]: { date: dateISO, carId: car.id, dueAmount, paidCash: Number(paidCash || 0), paidCard: Number(paidCard || 0), paidAmount, status } } };
     });
   };
 
-  const saveDay = (day, car, paidAmount) => {
+  const saveDay = (day, car, paidCash, paidCard) => {
     const dateISO = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    commitPayment(dateISO, car, paidAmount);
+    commitPayment(dateISO, car, paidCash, paidCard);
     setSel(null);
   };
 
@@ -610,7 +611,7 @@ function CalendarView({ data, update }) {
           day={sel.day} car={sel.car} year={year} month={month}
           record={data.payments[keyFor(sel.day, sel.car.id)]}
           fallbackDue={dailyRate(sel.car, year, month)}
-          onSave={(amount) => saveDay(sel.day, sel.car, amount)}
+          onSave={(cash, card) => saveDay(sel.day, sel.car, cash, card)}
           onClose={() => setSel(null)}
         />
       )}
@@ -645,7 +646,7 @@ function QuickTodayView({ data, commitPayment }) {
               <div style={{ fontSize: 12, color: "var(--muted)" }}>{driver ? driver.nume : "nealocat"} · {fmtMoney(due)}</div>
             </div>
             <StatusPill status={status} restanta={due - (paid || 0)} />
-            <button className="btn" onClick={() => commitPayment(today, car, due)}><Check size={14} />Achitat</button>
+            <button className="btn" onClick={() => commitPayment(today, car, due, 0)}><Check size={14} />Achitat</button>
             <button className="btn danger" onClick={() => setSel(car)}>Altă sumă</button>
           </div>
         );
@@ -655,7 +656,7 @@ function QuickTodayView({ data, commitPayment }) {
           day={new Date().getDate()} car={sel} year={now.getFullYear()} month={now.getMonth()}
           record={data.payments[`${today}__${sel.id}`]}
           fallbackDue={dailyRate(sel, now.getFullYear(), now.getMonth())}
-          onSave={(amount) => { commitPayment(today, sel, amount); setSel(null); }}
+          onSave={(cash, card) => { commitPayment(today, sel, cash, card); setSel(null); }}
           onClose={() => setSel(null)}
         />
       )}
@@ -696,7 +697,7 @@ function MonthGridView({ data, year, month, days, keyFor, changeMonth, onCellCli
                   const status = p ? p.status : "pending";
                   const colors = { paid: "var(--green)", unpaid: "var(--red)", partial: "var(--orange)", pending: "#3a4150" };
                   const title = p
-                    ? `${fmtMoney(p.paidAmount)} din ${fmtMoney(p.dueAmount)}` + (p.dueAmount > p.paidAmount ? ` — mai are ${fmtMoney(p.dueAmount - p.paidAmount)}` : "")
+                    ? `Numerar ${fmtMoney(p.paidCash || 0)} + Card ${fmtMoney(p.paidCard || 0)} = ${fmtMoney(p.paidAmount)} din ${fmtMoney(p.dueAmount)}` + (p.dueAmount > p.paidAmount ? ` — mai are ${fmtMoney(p.dueAmount - p.paidAmount)}` : "")
                     : `Tarif ${fmtMoney(dailyRate(car, year, month))}/zi — neatins`;
                   return (
                     <td key={d} style={{ padding: 3, textAlign: "center" }}>
@@ -722,8 +723,10 @@ function MonthGridView({ data, year, month, days, keyFor, changeMonth, onCellCli
 
 function DayPaymentModal({ day, car, year, month, record, fallbackDue, onSave, onClose }) {
   const due = record ? record.dueAmount : fallbackDue;
-  const [amount, setAmount] = useState(record ? record.paidAmount : fallbackDue);
-  const restanta = Math.max(due - Number(amount || 0), 0);
+  const [cash, setCash] = useState(record ? record.paidCash ?? record.paidAmount ?? 0 : fallbackDue);
+  const [card, setCard] = useState(record ? record.paidCard ?? 0 : 0);
+  const total = Number(cash || 0) + Number(card || 0);
+  const restanta = Math.max(due - total, 0);
   const dateLabel = `${String(day).padStart(2, "0")} ${MONTHS_RO[month]} ${year}`;
 
   return (
@@ -731,14 +734,22 @@ function DayPaymentModal({ day, car, year, month, record, fallbackDue, onSave, o
       <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14 }}>Tarif fix pe zi: <span className="mono" style={{ color: "var(--text)" }}>{fmtMoney(due)}</span></div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <button className="quickbtn" onClick={() => setAmount(due)}>Achitat integral</button>
-        <button className="quickbtn" onClick={() => setAmount(0)}>Neachitat</button>
+        <button className="quickbtn" onClick={() => { setCash(due); setCard(0); }}>Achitat integral (numerar)</button>
+        <button className="quickbtn" onClick={() => { setCash(0); setCard(0); }}>Neachitat</button>
       </div>
 
-      <div className="field">
-        <label>Sumă efectiv achitată (lei)</label>
-        <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} />
+      <div style={{ display: "flex", gap: 10 }}>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Sumă numerar (lei)</label>
+          <input type="number" value={cash} onChange={(e) => setCash(e.target.value)} />
+        </div>
+        <div className="field" style={{ flex: 1 }}>
+          <label>Sumă card (lei)</label>
+          <input type="number" value={card} onChange={(e) => setCard(e.target.value)} />
+        </div>
       </div>
+
+      <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14 }}>Total achitat: <span className="mono" style={{ color: "var(--text)", fontWeight: 700 }}>{fmtMoney(total)}</span></div>
 
       {restanta > 0 && (
         <div style={{ fontSize: 13, color: "var(--orange)", marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
@@ -747,7 +758,7 @@ function DayPaymentModal({ day, car, year, month, record, fallbackDue, onSave, o
       )}
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn primary" style={{ flex: 1, justifyContent: "center" }} onClick={() => onSave(Number(amount || 0))}><Check size={15} />Salvează</button>
+        <button className="btn primary" style={{ flex: 1, justifyContent: "center" }} onClick={() => onSave(Number(cash || 0), Number(card || 0))}><Check size={15} />Salvează</button>
         <button className="btn" onClick={onClose}>Anulează</button>
       </div>
     </Modal>
