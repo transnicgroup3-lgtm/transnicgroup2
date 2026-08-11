@@ -39,6 +39,9 @@ function dailyRate(car, year, month) {
 function fmtRate(car) {
   return car.tarifPeriod === "luna" ? `${fmtMoney(car.tarif)}/lună` : `${fmtMoney(car.tarif)}/zi`;
 }
+function askDelete(message, fn) {
+  if (window.confirm(message)) fn();
+}
 
 function statusOf(due, paid) {
   if (paid == null) return "pending";
@@ -372,7 +375,7 @@ function CarsView({ data, update }) {
                     <td><CarStatusPill status={c.status} /></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn" style={{ padding: 6, marginRight: 6 }} onClick={() => setEditing(c)}><Pencil size={14} /></button>
-                      <button className="btn danger" style={{ padding: 6 }} onClick={() => remove(c.id)}><Trash2 size={14} /></button>
+                      <button className="btn danger" style={{ padding: 6 }} onClick={() => askDelete(`Ștergi mașina ${c.nr}? Această acțiune nu poate fi anulată.`, () => remove(c.id))}><Trash2 size={14} /></button>
                     </td>
                   </tr>
                 );
@@ -493,7 +496,7 @@ function DriversView({ data, update }) {
                     <td><span className="pill" style={{ background: d.activ ? "#2bb67322" : "#8b93a122", color: d.activ ? "var(--green)" : "var(--muted)" }}>{d.activ ? "Activ" : "Inactiv"}</span></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn" style={{ padding: 6, marginRight: 6 }} onClick={() => setEditing(d)}><Pencil size={14} /></button>
-                      <button className="btn danger" style={{ padding: 6 }} onClick={() => remove(d.id)}><Trash2 size={14} /></button>
+                      <button className="btn danger" style={{ padding: 6 }} onClick={() => askDelete(`Ștergi șoferul ${d.nume}? Această acțiune nu poate fi anulată.`, () => remove(d.id))}><Trash2 size={14} /></button>
                     </td>
                   </tr>
                 );
@@ -833,7 +836,7 @@ function InsuranceView({ data, update }) {
                     <td><InsuranceStatusPill status={status} days={days} /></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn" style={{ padding: 6, marginRight: 6 }} onClick={() => setEditing(ins)}><Pencil size={14} /></button>
-                      <button className="btn danger" style={{ padding: 6 }} onClick={() => remove(ins.id)}><Trash2 size={14} /></button>
+                      <button className="btn danger" style={{ padding: 6 }} onClick={() => askDelete("Ștergi această asigurare? Această acțiune nu poate fi anulată.", () => remove(ins.id))}><Trash2 size={14} /></button>
                     </td>
                   </tr>
                 );
@@ -938,7 +941,7 @@ function InspectionView({ data, update }) {
                     <td><InsuranceStatusPill status={status} days={days} /></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn" style={{ padding: 6, marginRight: 6 }} onClick={() => setEditing(insp)}><Pencil size={14} /></button>
-                      <button className="btn danger" style={{ padding: 6 }} onClick={() => remove(insp.id)}><Trash2 size={14} /></button>
+                      <button className="btn danger" style={{ padding: 6 }} onClick={() => askDelete("Ștergi această revizie tehnică? Această acțiune nu poate fi anulată.", () => remove(insp.id))}><Trash2 size={14} /></button>
                     </td>
                   </tr>
                 );
@@ -1037,7 +1040,7 @@ function FinanceView({ data, update }) {
                 {data.incomes.filter((i) => i.data.startsWith(mk)).map((i) => (
                   <tr key={i.id}>
                     <td>{i.descriere}</td><td className="mono" style={{ color: "var(--green)" }}>{fmtMoney(i.suma)}</td>
-                    <td style={{ textAlign: "right" }}><button className="btn danger" style={{ padding: 5 }} onClick={() => delIncome(i.id)}><Trash2 size={13} /></button></td>
+                    <td style={{ textAlign: "right" }}><button className="btn danger" style={{ padding: 5 }} onClick={() => askDelete("Ștergi acest venit? Această acțiune nu poate fi anulată.", () => delIncome(i.id))}><Trash2 size={13} /></button></td>
                   </tr>
                 ))}
               </tbody>
@@ -1057,7 +1060,7 @@ function FinanceView({ data, update }) {
                   <tr key={e.id}>
                     <td>{e.descriere}<div style={{ fontSize: 11, color: "var(--muted)" }}>{e.categorie}</div></td>
                     <td className="mono" style={{ color: "var(--red)" }}>{fmtMoney(e.suma)}</td>
-                    <td style={{ textAlign: "right" }}><button className="btn danger" style={{ padding: 5 }} onClick={() => delExpense(e.id)}><Trash2 size={13} /></button></td>
+                    <td style={{ textAlign: "right" }}><button className="btn danger" style={{ padding: 5 }} onClick={() => askDelete("Ștergi această cheltuială? Această acțiune nu poate fi anulată.", () => delExpense(e.id))}><Trash2 size={13} /></button></td>
                   </tr>
                 ))}
               </tbody>
