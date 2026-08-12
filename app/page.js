@@ -8,22 +8,27 @@ import {
 
 /* ---------------------------------------------------------------
    Taxi Fleet Pro Cloud (web version)
-   Data stored in Supabase via /api/data — same data on every
-   device that opens this site.
+   Data stored in Supabase via /api/data.
+   Payment model: weekly. Each month is split into 4 fixed sections
+   (1-7, 8-14, 15-21, 22-end). Sundays don't count toward the plan.
+   If a car doesn't reach its monthly plan, the shortfall is added
+   automatically to the next month's plan.
 ---------------------------------------------------------------- */
 
 const uid = () => Math.random().toString(36).slice(2, 10);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 const MONTHS_RO = ["Ianuarie","Februarie","Martie","Aprilie","Mai","Iunie","Iulie","August","Septembrie","Octombrie","Noiembrie","Decembrie"];
+const MONTHS_RO_SHORT = ["Ian","Feb","Mar","Apr","Mai","Iun","Iul","Aug","Sep","Oct","Noi","Dec"];
 
 const emptyData = () => ({
   cars: [],
   drivers: [],
-  payments: {},   // key `${date}__${carId}` -> {date, carId, dueAmount, paidCash, paidCard, paidAmount, status}
+  payments: {},        // legacy, unused
+  weeklyPayments: {},  // key `${y}-${mm}__${carId}__${weekIdx}` -> {year,month,carId,weekIdx,paidCash,paidCard,paidAmount}
   expenses: [],
   incomes: [],
-  insurances: [], // {id, carId, tip, dataExpirare, cost, notes}
-  inspections: [], // {id, carId, dataExpirare}
+  insurances: [],
+  inspections: [],
 });
 
 function fmtMoney(n) {
@@ -32,19 +37,76 @@ function fmtMoney(n) {
 }
 function daysInMonth(year, month) { return new Date(year, month + 1, 0).getDate(); }
 function monthKey(y, m) { return `${y}-${String(m + 1).padStart(2, "0")}`; }
+function isSunday(year, month, day) { return new Date(year, month, day).getDay() === 0; }
+
+function workingDaysInRange(year, month, startDay, endDay) {
+  let count = 0;
+  for (let d = startDay; d <= endDay; d++) if (!isSunday(year, month, d)) count++;
+  return count;
+}
+function weekRanges(year, month) {
+  const last = daysInMonth(year, month);
+  return [[1, 7], [8, 14], [15, 21], [22, last]]
+    .filter(([s]) => s <= last)
+    .map(([s, e]) => ({ start: s, end: Math.min(e, last) }));
+}
+function workingDaysInMonth(year, month) { return workingDaysInRange(year, month, 1, daysInMonth(year, month)); }
+
 function dailyRate(car, year, month) {
-  if (car.tarifPeriod === "luna") return Math.round((Number(car.tarif) || 0) / daysInMonth(year, month));
+  if (car.tarifPeriod === "luna") {
+    const wd = workingDaysInMonth(year, month);
+    return wd > 0 ? (Number(car.tarif) || 0) / wd : 0;
+  }
   return Number(car.tarif) || 0;
 }
 function fmtRate(car) {
   return car.tarifPeriod === "luna" ? `${fmtMoney(car.tarif)}/lună` : `${fmtMoney(car.tarif)}/zi`;
 }
+function monthlyPlanBase(car, year, month) { return dailyRate(car, year, month) * workingDaysInMonth(year, month); }
 
+function weekKey(year, month, carId, weekIdx) { return `${year}-${String(month + 1).padStart(2, "0")}__${carId}__${weekIdx}`; }
+function weeklyRecord(data, year, month, carId, weekIdx) { return data.weeklyPayments[weekKey(year, month, carId, weekIdx)] || null; }
+function weeklyPaid(data, year, month, carId, weekIdx) {
+  const r = weeklyRecord(data, year, month, carId, weekIdx);
+  return r ? Number(r.paidAmount || 0) : 0;
+}
+function monthlyPaid(data, year, month, carId) {
+  const ranges = weekRanges(year, month);
+  let sum = 0;
+  for (let i = 0; i < ranges.length; i++) sum += weeklyPaid(data, year, month, carId, i);
+  return sum;
+}
+function hasAnyRecordForMonth(data, year, month, carId) {
+  const ranges = weekRanges(year, month);
+  for (let i = 0; i < ranges.length; i++) if (weeklyRecord(data, year, month, carId, i)) return true;
+  return false;
+}
+function prevMonth(year, month) { return month === 0 ? { year: year - 1, month: 11 } : { year, month: month - 1 }; }
+
+function carryoverFromPrevMonth(data, car, year, month) {
+  const pm = prevMonth(year, month);
+  if (!hasAnyRecordForMonth(data, pm.year, pm.month, car.id)) return 0;
+  const plan = monthlyPlanWithCarry(data, car, pm.year, pm.month);
+  const paid = monthlyPaid(data, pm.year, pm.month, car.id);
+  return Math.max(plan - paid, 0);
+}
+function monthlyPlanWithCarry(data, car, year, month) {
+  return monthlyPlanBase(car, year, month) + carryoverFromPrevMonth(data, car, year, month);
+}
+function weekPlan(data, car, year, month, weekIdx, ranges) {
+  const r = ranges[weekIdx];
+  const base = dailyRate(car, year, month) * workingDaysInRange(year, month, r.start, r.end);
+  return weekIdx === 0 ? base + carryoverFromPrevMonth(data, car, year, month) : base;
+}
 function statusOf(due, paid) {
   if (paid == null) return "pending";
   if (paid <= 0) return "unpaid";
   if (paid >= due) return "paid";
   return "partial";
+}
+function currentWeekIndex(year, month, day, ranges) {
+  const idx = ranges.findIndex((r) => day >= r.start && day <= r.end);
+  return idx === -1 ? ranges.length - 1 : idx;
 }
 
 export default function TaxiFleetPro() {
@@ -104,7 +166,7 @@ export default function TaxiFleetPro() {
       {tab === "dashboard" && <Dashboard data={data} setTab={setTab} />}
       {tab === "cars" && <CarsView data={data} update={update} />}
       {tab === "drivers" && <DriversView data={data} update={update} />}
-      {tab === "calendar" && <CalendarView data={data} update={update} />}
+      {tab === "calendar" && <WeeklyCalendarView data={data} update={update} />}
       {tab === "insurance" && <InsuranceView data={data} update={update} />}
       {tab === "inspection" && <InspectionView data={data} update={update} />}
       {tab === "finance" && <FinanceView data={data} update={update} />}
@@ -169,18 +231,16 @@ function Shell({ tab, setTab, children, loading, saveError }) {
         .quickbtn:hover{background:#ffffff1a}
         .tfp-footer{padding:16px 20px;border-top:1px solid var(--border);text-align:center;font-size:12px;color:var(--muted)}
         .finance-grid{grid-template-columns:1fr 1fr}
-        .daycell{padding:0;text-align:center}
-        .daybtn{width:26px;height:26px;border-radius:6px;border:none;cursor:pointer}
-        .quickrow{display:flex;align-items:center;gap:10px;padding:11px 12px;border-radius:10px;background:#ffffff08;margin-bottom:8px}
-        .quickrow .btn{padding:11px 12px}
+        .weekrow{display:grid;grid-template-columns:1fr auto auto auto;gap:10px;align-items:center;padding:9px 0;border-top:1px solid #ffffff0a}
+        .weekrow:first-child{border-top:none}
         @media (max-width: 680px){
           .finance-grid{grid-template-columns:1fr}
           .tfp-navbtn{padding:11px 14px;font-size:14px}
           .btn{padding:11px 15px;font-size:14.5px}
-          .daybtn{width:34px;height:34px;border-radius:8px}
           .tfp-body{padding:14px}
           th,td{padding:10px 8px}
           input,select,textarea{padding:11px 12px;font-size:15px}
+          .weekrow{grid-template-columns:1fr;gap:6px}
         }
       `}</style>
 
@@ -213,36 +273,36 @@ function Shell({ tab, setTab, children, loading, saveError }) {
 /* ============================== DASHBOARD ============================== */
 
 function Dashboard({ data, setTab }) {
-  const today = todayISO();
+  const now = new Date();
+  const year = now.getFullYear(), month = now.getMonth(), day = now.getDate();
+  const ranges = weekRanges(year, month);
+  const wIdx = currentWeekIndex(year, month, day, ranges);
+  const range = ranges[wIdx];
+
   const activeCars = data.cars.filter((c) => c.status === "activa").length;
   const inService = data.cars.filter((c) => c.status === "service").length;
 
-  const insuranceAlerts = data.insurances.filter((ins) => {
-    const d = daysUntil(ins.dataExpirare);
-    return d != null && d <= 30;
+  const weekRows = data.cars.map((c) => {
+    const rec = weeklyRecord(data, year, month, c.id, wIdx);
+    const due = weekPlan(data, c, year, month, wIdx, ranges);
+    const paid = rec ? rec.paidAmount : null;
+    return { car: c, due, paid, status: statusOf(due, paid) };
   });
-  const inspectionAlerts = data.inspections.filter((insp) => {
-    const d = daysUntil(insp.dataExpirare);
-    return d != null && d <= 30;
-  });
+  const incomeWeek = weekRows.reduce((s, r) => s + (r.paid || 0), 0);
+  const expensesWeek = data.expenses
+    .filter((e) => e.data && e.data.startsWith(monthKey(year, month)) && Number(e.data.slice(8, 10)) >= range.start && Number(e.data.slice(8, 10)) <= range.end)
+    .reduce((s, e) => s + Number(e.suma || 0), 0);
+  const profitWeek = incomeWeek - expensesWeek;
+  const problemCount = weekRows.filter((r) => r.status === "unpaid" || r.status === "partial").length;
 
-  const todayRows = data.cars.map((c) => {
-    const p = data.payments[`${today}__${c.id}`];
-    const now = new Date();
-    const due = p ? p.dueAmount : dailyRate(c, now.getFullYear(), now.getMonth());
-    const paid = p ? p.paidAmount : null;
-    return { car: c, status: statusOf(due, paid), due, paid };
-  });
-  const incomeToday = todayRows.reduce((s, r) => s + (r.paid || 0), 0);
-  const expensesToday = data.expenses.filter((e) => e.data === today).reduce((s, e) => s + Number(e.suma || 0), 0);
-  const profitToday = incomeToday - expensesToday;
-  const problemToday = todayRows.filter((r) => r.status === "unpaid" || r.status === "partial").length;
+  const insuranceAlerts = data.insurances.filter((ins) => { const d = daysUntil(ins.dataExpirare); return d != null && d <= 30; });
+  const inspectionAlerts = data.inspections.filter((insp) => { const d = daysUntil(insp.dataExpirare); return d != null && d <= 30; });
 
   const stats = [
     { label: "Mașini", value: data.cars.length, icon: Car, sub: `${activeCars} active · ${inService} service` },
     { label: "Șoferi", value: data.drivers.length, icon: Users, sub: `${data.drivers.filter((d) => d.activ).length} activi` },
-    { label: "Încasări azi", value: fmtMoney(incomeToday), icon: Wallet, sub: `${todayRows.filter((r) => r.status === "paid").length}/${data.cars.length} plătite integral`, mono: true },
-    { label: "Profit azi", value: fmtMoney(profitToday), icon: profitToday >= 0 ? TrendingUp : TrendingDown, sub: `cheltuieli ${fmtMoney(expensesToday)}`, mono: true, accent: profitToday >= 0 },
+    { label: "Încasări săpt.", value: fmtMoney(incomeWeek), icon: Wallet, sub: `${weekRows.filter((r) => r.status === "paid").length}/${data.cars.length} la zi`, mono: true },
+    { label: "Profit săpt.", value: fmtMoney(profitWeek), icon: profitWeek >= 0 ? TrendingUp : TrendingDown, sub: `cheltuieli ${fmtMoney(expensesWeek)}`, mono: true, accent: profitWeek >= 0 },
   ];
 
   return (
@@ -260,14 +320,13 @@ function Dashboard({ data, setTab }) {
         ))}
       </div>
 
-      {problemToday > 0 && (
+      {problemCount > 0 && (
         <div className="card" style={{ borderColor: "#e5484d55", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
           <AlertTriangle size={17} color="var(--red)" />
-          <div style={{ fontSize: 13.5 }}>{problemToday} mașin{problemToday === 1 ? "ă are" : "i au"} restanță astăzi.</div>
+          <div style={{ fontSize: 13.5 }}>{problemCount} mașin{problemCount === 1 ? "ă are" : "i au"} restanță în săptămâna asta.</div>
           <button className="btn" style={{ marginLeft: "auto" }} onClick={() => setTab("calendar")}>Deschide calendar</button>
         </div>
       )}
-
       {insuranceAlerts.length > 0 && (
         <div className="card" style={{ borderColor: "#f2841c55", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
           <Shield size={17} color="var(--orange)" />
@@ -275,7 +334,6 @@ function Dashboard({ data, setTab }) {
           <button className="btn" style={{ marginLeft: "auto" }} onClick={() => setTab("insurance")}>Deschide asigurări</button>
         </div>
       )}
-
       {inspectionAlerts.length > 0 && (
         <div className="card" style={{ borderColor: "#f2841c55", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
           <Wrench size={17} color="var(--orange)" />
@@ -285,14 +343,15 @@ function Dashboard({ data, setTab }) {
       )}
 
       <div className="card">
-        <div style={{ fontWeight: 700, marginBottom: 10 }} className="disp">Astăzi, pe mașini</div>
+        <div style={{ fontWeight: 700, marginBottom: 4 }} className="disp">Săptămâna aceasta, pe mașini</div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>{range.start}–{range.end} {MONTHS_RO[month]}</div>
         {data.cars.length === 0 ? (
           <EmptyState text="Adaugă prima mașină din secțiunea Mașini." />
         ) : (
           <table>
-            <thead><tr><th>Mașină</th><th>Șofer</th><th>Tarif</th><th>Achitat</th><th>Stare</th></tr></thead>
+            <thead><tr><th>Mașină</th><th>Șofer</th><th>Plan săpt.</th><th>Adus</th><th>Stare</th></tr></thead>
             <tbody>
-              {todayRows.map(({ car, status, due, paid }) => {
+              {weekRows.map(({ car, status, due, paid }) => {
                 const driver = data.drivers.find((d) => d.id === car.driverId);
                 return (
                   <tr key={car.id}>
@@ -314,7 +373,7 @@ function Dashboard({ data, setTab }) {
 
 function StatusPill({ status, restanta }) {
   const map = {
-    paid: { label: "Achitat", bg: "#2bb67322", color: "var(--green)" },
+    paid: { label: "Plan îndeplinit", bg: "#2bb67322", color: "var(--green)" },
     unpaid: { label: "Neachitat", bg: "#e5484d22", color: "var(--red)" },
     partial: { label: `Mai are ${fmtMoney(restanta)}`, bg: "#f2841c22", color: "var(--orange)" },
     pending: { label: "Așteptăm", bg: "#f2b70522", color: "var(--amber)" },
@@ -325,6 +384,24 @@ function StatusPill({ status, restanta }) {
 
 function EmptyState({ text }) {
   return <div style={{ color: "var(--muted)", fontSize: 13.5, padding: "18px 0", textAlign: "center" }}>{text}</div>;
+}
+
+function ConfirmModal({ message, onConfirm, onCancel }) {
+  return (
+    <div className="modal-backdrop" onClick={onCancel}>
+      <div className="modal" style={{ maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <AlertTriangle size={20} color="var(--red)" />
+          <div className="disp" style={{ fontWeight: 700, fontSize: 16 }}>Confirmă ștergerea</div>
+        </div>
+        <div style={{ fontSize: 13.5, marginBottom: 18 }}>{message}</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn danger" style={{ flex: 1, justifyContent: "center" }} onClick={onConfirm}><Trash2 size={15} />Șterge</button>
+          <button className="btn" style={{ flex: 1, justifyContent: "center" }} onClick={onCancel}>Anulează</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /* ============================== CARS ============================== */
@@ -359,7 +436,7 @@ function CarsView({ data, update }) {
       ) : (
         <div className="card" style={{ overflowX: "auto" }}>
           <table>
-            <thead><tr><th>Nr.</th><th>Marcă / Model</th><th>An</th><th>Tarif/zi</th><th>Șofer</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Nr.</th><th>Marcă / Model</th><th>An</th><th>Tarif</th><th>Șofer</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {sortedCars.map((c) => {
                 const driver = data.drivers.find((d) => d.id === c.driverId);
@@ -425,9 +502,6 @@ function CarForm({ car, drivers, onSave, onCancel }) {
             <option value="luna">lei / lună</option>
           </select>
         </div>
-        {f.tarifPeriod === "luna" && (
-          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 5 }}>Echivalent aproximativ: {fmtMoney(Math.round((Number(f.tarif) || 0) / 30))}/zi, folosit în calendar.</div>
-        )}
       </div>
       <div className="field">
         <label>Șofer alocat</label>
@@ -539,17 +613,15 @@ function DriverForm({ driver, onSave, onCancel }) {
   );
 }
 
-/* ============================== CALENDAR ============================== */
+/* ============================== WEEKLY CALENDAR ============================== */
 
-function CalendarView({ data, update }) {
+function WeeklyCalendarView({ data, update }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
-  const [sel, setSel] = useState(null); // {day, car}
-  const [view, setView] = useState("azi"); // 'azi' | 'luna'
   const [search, setSearch] = useState("");
-  const nDays = daysInMonth(year, month);
-  const days = Array.from({ length: nDays }, (_, i) => i + 1);
+  const ranges = weekRanges(year, month);
+  const todayIdx = (year === now.getFullYear() && month === now.getMonth()) ? currentWeekIndex(year, month, now.getDate(), ranges) : -1;
 
   const filteredCars = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -557,7 +629,6 @@ function CalendarView({ data, update }) {
       .filter((c) => !term || c.nr.toLowerCase().includes(term) || `${c.marca} ${c.model}`.toLowerCase().includes(term))
       .sort((a, b) => a.nr.localeCompare(b.nr, "ro", { sensitivity: "base", numeric: true }));
   }, [data.cars, search]);
-  const filteredData = { ...data, cars: filteredCars };
 
   const changeMonth = (delta) => {
     let m = month + delta, y = year;
@@ -566,215 +637,124 @@ function CalendarView({ data, update }) {
     setMonth(m); setYear(y);
   };
 
-  const keyFor = (day, carId) => `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}__${carId}`;
-
-  const commitPayment = (dateISO, car, paidCash, paidCard) => {
-    const k = `${dateISO}__${car.id}`;
-    const [y, m] = dateISO.split("-").map(Number);
-    const paidAmount = Number(paidCash || 0) + Number(paidCard || 0);
-    update((prev) => {
-      const cur = prev.payments[k];
-      const dueAmount = cur ? cur.dueAmount : dailyRate(car, y, m - 1);
-      const status = statusOf(dueAmount, paidAmount);
-      return { ...prev, payments: { ...prev.payments, [k]: { date: dateISO, carId: car.id, dueAmount, paidCash: Number(paidCash || 0), paidCard: Number(paidCard || 0), paidAmount, status } } };
-    });
-  };
-
-  const saveDay = (day, car, paidCash, paidCard) => {
-    const dateISO = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    commitPayment(dateISO, car, paidCash, paidCard);
-    setSel(null);
+  const setWeekAmount = (car, weekIdx, cash, card) => {
+    const k = weekKey(year, month, car.id, weekIdx);
+    const paidAmount = Number(cash || 0) + Number(card || 0);
+    update((prev) => ({
+      ...prev,
+      weeklyPayments: { ...prev.weeklyPayments, [k]: { year, month, carId: car.id, weekIdx, paidCash: Number(cash || 0), paidCard: Number(card || 0), paidAmount } },
+    }));
   };
 
   if (data.cars.length === 0) {
-    return <div className="card"><EmptyState text="Adaugă cel puțin o mașină pentru a folosi calendarul de sdare." /></div>;
+    return <div className="card"><EmptyState text="Adaugă cel puțin o mașină pentru a folosi calendarul." /></div>;
   }
 
-  return (
-    <div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <button className={"btn" + (view === "azi" ? " primary" : "")} style={{ flex: 1, justifyContent: "center" }} onClick={() => setView("azi")}>Astăzi</button>
-        <button className={"btn" + (view === "luna" ? " primary" : "")} style={{ flex: 1, justifyContent: "center" }} onClick={() => setView("luna")}>Calendar lună</button>
-      </div>
-
-      <div className="field" style={{ marginBottom: 14 }}>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Caută mașină după număr, marcă sau model…"
-        />
-      </div>
-
-      {view === "azi" ? (
-        <QuickTodayView data={filteredData} commitPayment={commitPayment} />
-      ) : (
-        <MonthGridView
-          data={filteredData} year={year} month={month} days={days} keyFor={keyFor}
-          changeMonth={changeMonth} onCellClick={(day, car) => setSel({ day, car })}
-        />
-      )}
-
-      {sel && (
-        <DayPaymentModal
-          day={sel.day} car={sel.car} year={year} month={month}
-          record={data.payments[keyFor(sel.day, sel.car.id)]}
-          fallbackDue={dailyRate(sel.car, year, month)}
-          onSave={(cash, card) => saveDay(sel.day, sel.car, cash, card)}
-          onClose={() => setSel(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-function QuickTodayView({ data, commitPayment }) {
-  const today = todayISO();
-  const now = new Date();
-  const [sel, setSel] = useState(null); // car for custom-amount modal
-
-  const rows = data.cars.map((c) => {
-    const p = data.payments[`${today}__${c.id}`];
-    const due = p ? p.dueAmount : dailyRate(c, now.getFullYear(), now.getMonth());
-    const paid = p ? p.paidAmount : null;
-    return { car: c, due, paid, status: statusOf(due, paid) };
-  });
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-        {new Date().toLocaleDateString("ro-RO", { weekday: "long", day: "numeric", month: "long" })}
-      </div>
-      {rows.length === 0 && <EmptyState text="Nicio mașină găsită pentru căutarea asta." />}
-      {rows.map(({ car, due, paid, status }) => {
-        const driver = data.drivers.find((d) => d.id === car.driverId);
-        return (
-          <div className="quickrow" key={car.id}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700 }}>{car.nr}</div>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>{driver ? driver.nume : "nealocat"} · {fmtMoney(due)}</div>
-            </div>
-            <StatusPill status={status} restanta={due - (paid || 0)} />
-            <button className="btn" onClick={() => commitPayment(today, car, due, 0)}><Check size={14} />Achitat</button>
-            <button className="btn danger" onClick={() => setSel(car)}>Altă sumă</button>
-          </div>
-        );
-      })}
-      {sel && (
-        <DayPaymentModal
-          day={new Date().getDate()} car={sel} year={now.getFullYear()} month={now.getMonth()}
-          record={data.payments[`${today}__${sel.id}`]}
-          fallbackDue={dailyRate(sel, now.getFullYear(), now.getMonth())}
-          onSave={(cash, card) => { commitPayment(today, sel, cash, card); setSel(null); }}
-          onClose={() => setSel(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-function MonthGridView({ data, year, month, days, keyFor, changeMonth, onCellClick }) {
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <button className="btn" style={{ padding: 8 }} onClick={() => changeMonth(-1)}><ChevronLeft size={16} /></button>
         <div className="disp" style={{ fontSize: 18, fontWeight: 700, minWidth: 170, textAlign: "center" }}>{MONTHS_RO[month]} {year}</div>
         <button className="btn" style={{ padding: 8 }} onClick={() => changeMonth(1)}><ChevronRight size={16} /></button>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 12, fontSize: 12, color: "var(--muted)", flexWrap: "wrap" }}>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Dot color="var(--green)" />Achitat</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Dot color="var(--orange)" />Parțial</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Dot color="var(--red)" />Neachitat</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 5 }}><Dot color="#3a4150" />Așteptăm</span>
-        </div>
       </div>
 
-      <div className="card" style={{ overflowX: "auto", padding: 10 }}>
-        {data.cars.length === 0 ? <EmptyState text="Nicio mașină găsită pentru căutarea asta." /> : (
-        <table>
-          <thead>
-            <tr>
-              <th style={{ position: "sticky", left: 0, background: "var(--panel)" }}>Mașină</th>
-              {days.map((d) => <th key={d} style={{ textAlign: "center", padding: "6px 4px" }}>{d}</th>)}
-            </tr>
-          </thead>
-          <tbody>
-            {data.cars.map((car) => (
-              <tr key={car.id}>
-                <td style={{ position: "sticky", left: 0, background: "var(--panel)", fontWeight: 600, whiteSpace: "nowrap" }}>{car.nr}</td>
-                {days.map((d) => {
-                  const p = data.payments[keyFor(d, car.id)];
-                  const status = p ? p.status : "pending";
-                  const colors = { paid: "var(--green)", unpaid: "var(--red)", partial: "var(--orange)", pending: "#3a4150" };
-                  const title = p
-                    ? `Numerar ${fmtMoney(p.paidCash || 0)} + Card ${fmtMoney(p.paidCard || 0)} = ${fmtMoney(p.paidAmount)} din ${fmtMoney(p.dueAmount)}` + (p.dueAmount > p.paidAmount ? ` — mai are ${fmtMoney(p.dueAmount - p.paidAmount)}` : "")
-                    : `Tarif ${fmtMoney(dailyRate(car, year, month))}/zi — neatins`;
-                  return (
-                    <td key={d} style={{ padding: 3, textAlign: "center" }}>
-                      <button
-                        onClick={() => onCellClick(d, car)}
-                        title={title}
-                        className="daybtn"
-                        style={{ background: colors[status], opacity: status === "pending" ? 0.55 : 1 }}
-                      />
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        )}
+      <div className="field" style={{ marginBottom: 14 }}>
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Caută mașină după număr, marcă sau model…" />
       </div>
-      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>Click pe o celulă pentru a marca suma achitată în acea zi. Dacă e mai mică decât tariful, restanța se calculează și se afișează automat.</div>
+
+      {filteredCars.length === 0 ? (
+        <div className="card"><EmptyState text="Nicio mașină găsită pentru căutarea asta." /></div>
+      ) : (
+        filteredCars.map((car) => (
+          <CarWeekCard
+            key={car.id} car={car} data={data} year={year} month={month} ranges={ranges}
+            todayIdx={todayIdx} driver={data.drivers.find((d) => d.id === car.driverId)}
+            onSetWeek={(weekIdx, cash, card) => setWeekAmount(car, weekIdx, cash, card)}
+          />
+        ))
+      )}
     </div>
   );
 }
 
-function DayPaymentModal({ day, car, year, month, record, fallbackDue, onSave, onClose }) {
-  const due = record ? record.dueAmount : fallbackDue;
-  const [cash, setCash] = useState(record ? record.paidCash ?? record.paidAmount ?? 0 : fallbackDue);
-  const [card, setCard] = useState(record ? record.paidCard ?? 0 : 0);
-  const total = Number(cash || 0) + Number(card || 0);
-  const restanta = Math.max(due - total, 0);
-  const dateLabel = `${String(day).padStart(2, "0")} ${MONTHS_RO[month]} ${year}`;
+function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, onSetWeek }) {
+  const carryover = carryoverFromPrevMonth(data, car, year, month);
+  const planTotal = monthlyPlanWithCarry(data, car, year, month);
+  const paidTotal = monthlyPaid(data, year, month, car.id);
+  const restTotal = Math.max(planTotal - paidTotal, 0);
 
   return (
-    <Modal onClose={onClose} title={`${car.nr} — ${dateLabel}`}>
-      <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14 }}>Tarif fix pe zi: <span className="mono" style={{ color: "var(--text)" }}>{fmtMoney(due)}</span></div>
-
-      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <button className="quickbtn" onClick={() => { setCash(due); setCard(0); }}>Achitat integral (numerar)</button>
-        <button className="quickbtn" onClick={() => { setCash(0); setCard(0); }}>Neachitat</button>
-      </div>
-
-      <div style={{ display: "flex", gap: 10 }}>
-        <div className="field" style={{ flex: 1 }}>
-          <label>Sumă numerar (lei)</label>
-          <input type="number" value={cash} onChange={(e) => setCash(e.target.value)} />
+    <div className="card" style={{ marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
+        <div>
+          <div className="disp" style={{ fontWeight: 700, fontSize: 15 }}>{car.nr}</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>{driver ? driver.nume : "nealocat"} · {fmtRate(car)}</div>
         </div>
-        <div className="field" style={{ flex: 1 }}>
-          <label>Sumă card (lei)</label>
-          <input type="number" value={card} onChange={(e) => setCard(e.target.value)} />
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 11, color: "var(--muted)" }}>Plan lună{carryover > 0 ? " (cu restanță)" : ""}</div>
+          <div className="mono" style={{ fontWeight: 700 }}>{fmtMoney(planTotal)}</div>
         </div>
       </div>
 
-      <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 14 }}>Total achitat: <span className="mono" style={{ color: "var(--text)", fontWeight: 700 }}>{fmtMoney(total)}</span></div>
-
-      {restanta > 0 && (
-        <div style={{ fontSize: 13, color: "var(--orange)", marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
-          <AlertTriangle size={14} /> Mai are de dat: <span className="mono" style={{ fontWeight: 700 }}>{fmtMoney(restanta)}</span>
+      {carryover > 0 && (
+        <div style={{ fontSize: 12, color: "var(--orange)", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
+          <AlertTriangle size={13} /> din care {fmtMoney(carryover)} restanță din luna trecută
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 8 }}>
-        <button className="btn primary" style={{ flex: 1, justifyContent: "center" }} onClick={() => onSave(Number(cash || 0), Number(card || 0))}><Check size={15} />Salvează</button>
-        <button className="btn" onClick={onClose}>Anulează</button>
+      <div style={{ marginBottom: 8 }}>
+        {ranges.map((r, i) => (
+          <WeekRow key={i} car={car} data={data} year={year} month={month} weekIdx={i} range={r} isCurrent={i === todayIdx} onSet={(cash, card) => onSetWeek(i, cash, card)} />
+        ))}
       </div>
-    </Modal>
+
+      <div style={{ display: "flex", gap: 16, fontSize: 12.5, borderTop: "1px solid var(--border)", paddingTop: 8, flexWrap: "wrap" }}>
+        <div>Adus: <span className="mono" style={{ color: "var(--green)", fontWeight: 700 }}>{fmtMoney(paidTotal)}</span></div>
+        <div>Rest: <span className="mono" style={{ color: restTotal > 0 ? "var(--orange)" : "var(--muted)", fontWeight: 700 }}>{fmtMoney(restTotal)}</span></div>
+      </div>
+    </div>
   );
 }
 
-function Dot({ color }) {
-  return <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, display: "inline-block" }} />;
+function WeekRow({ car, data, year, month, weekIdx, range, isCurrent, onSet }) {
+  const rec = weeklyRecord(data, year, month, car.id, weekIdx);
+  const plan = weekPlan(data, car, year, month, weekIdx, weekRanges(year, month));
+  const [cash, setCash] = useState(rec ? rec.paidCash : "");
+  const [card, setCard] = useState(rec ? rec.paidCard : "");
+
+  useEffect(() => {
+    setCash(rec ? rec.paidCash : "");
+    setCard(rec ? rec.paidCard : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month, weekIdx]);
+
+  const paid = rec ? rec.paidAmount : null;
+  const status = statusOf(plan, paid);
+  const colors = { paid: "var(--green)", unpaid: "var(--red)", partial: "var(--orange)", pending: "var(--muted)" };
+  const rest = Math.max(plan - (paid || 0), 0);
+
+  const commit = () => onSet(cash, card);
+
+  return (
+    <div className="weekrow">
+      <div>
+        <div style={{ fontWeight: isCurrent ? 700 : 500, display: "flex", alignItems: "center", gap: 6 }}>
+          Săpt {weekIdx + 1} <span style={{ color: "var(--muted)", fontWeight: 400 }}>({range.start}–{range.end})</span>
+          {isCurrent && <span className="pill" style={{ background: "#f2b70522", color: "var(--amber)" }}>curentă</span>}
+        </div>
+        <div style={{ fontSize: 11.5, color: colors[status] }}>
+          Plan {fmtMoney(plan)}{paid != null ? ` · adus ${fmtMoney(paid)}` : ""}{status === "partial" ? ` · mai are ${fmtMoney(rest)}` : ""}
+        </div>
+      </div>
+      <div style={{ width: 90 }}>
+        <input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commit} />
+      </div>
+      <div style={{ width: 90 }}>
+        <input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commit} />
+      </div>
+      <div><StatusPill status={status} restanta={rest} /></div>
+    </div>
+  );
 }
 
 /* ============================== INSURANCE ============================== */
@@ -785,7 +765,6 @@ function daysUntil(dateStr) {
   const target = new Date(dateStr);
   return Math.round((target - today) / (1000 * 60 * 60 * 24));
 }
-
 function insuranceStatus(days) {
   if (days == null) return "unknown";
   if (days < 0) return "expired";
@@ -800,9 +779,7 @@ function InsuranceView({ data, update }) {
 
   const save = (ins) => {
     update((prev) => {
-      const insurances = ins.id
-        ? prev.insurances.map((i) => (i.id === ins.id ? ins : i))
-        : [...prev.insurances, { ...ins, id: uid() }];
+      const insurances = ins.id ? prev.insurances.map((i) => (i.id === ins.id ? ins : i)) : [...prev.insurances, { ...ins, id: uid() }];
       return { ...prev, insurances };
     });
     setEditing(null);
@@ -910,9 +887,7 @@ function InspectionView({ data, update }) {
 
   const save = (insp) => {
     update((prev) => {
-      const inspections = insp.id
-        ? prev.inspections.map((i) => (i.id === insp.id ? insp : i))
-        : [...prev.inspections, { ...insp, id: uid() }];
+      const inspections = insp.id ? prev.inspections.map((i) => (i.id === insp.id ? insp : i)) : [...prev.inspections, { ...insp, id: uid() }];
       return { ...prev, inspections };
     });
     setEditing(null);
@@ -1004,9 +979,15 @@ function FinanceView({ data, update }) {
   const [showIncome, setShowIncome] = useState(false);
   const [confirm, setConfirm] = useState(null);
 
-  const monthPayments = Object.values(data.payments).filter((p) => p.date && p.date.startsWith(mk));
-  const calendarIncome = monthPayments.reduce((s, p) => s + Number(p.paidAmount || 0), 0);
-  const restante = monthPayments.reduce((s, p) => s + Math.max(Number(p.dueAmount || 0) - Number(p.paidAmount || 0), 0), 0);
+  const calendarIncome = Object.values(data.weeklyPayments)
+    .filter((p) => p.year === year && p.month === month)
+    .reduce((s, p) => s + Number(p.paidAmount || 0), 0);
+
+  const restante = data.cars.reduce((s, car) => {
+    const plan = monthlyPlanWithCarry(data, car, year, month);
+    const paid = monthlyPaid(data, year, month, car.id);
+    return s + Math.max(plan - paid, 0);
+  }, 0);
 
   const extraIncome = data.incomes.filter((i) => i.data.startsWith(mk)).reduce((s, i) => s + Number(i.suma || 0), 0);
   const expensesMonth = data.expenses.filter((e) => e.data.startsWith(mk));
@@ -1152,15 +1133,14 @@ function ReportsView({ data }) {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
-  const mk = monthKey(year, month);
 
   const perCar = useMemo(() => data.cars.map((car) => {
-    const pays = Object.values(data.payments).filter((p) => p.carId === car.id && p.date && p.date.startsWith(mk));
-    const paid = pays.reduce((s, p) => s + Number(p.paidAmount || 0), 0);
-    const restanta = pays.reduce((s, p) => s + Math.max(Number(p.dueAmount || 0) - Number(p.paidAmount || 0), 0), 0);
+    const plan = monthlyPlanWithCarry(data, car, year, month);
+    const paid = monthlyPaid(data, year, month, car.id);
+    const carryover = carryoverFromPrevMonth(data, car, year, month);
     const driver = data.drivers.find((d) => d.id === car.driverId);
-    return { car, driver, paid, restanta };
-  }).sort((a, b) => b.paid - a.paid), [data, mk]);
+    return { car, driver, plan, paid, rest: Math.max(plan - paid, 0), carryover };
+  }).sort((a, b) => b.paid - a.paid), [data, year, month]);
 
   const changeMonth = (delta) => {
     let m = month + delta, y = year;
@@ -1182,38 +1162,21 @@ function ReportsView({ data }) {
       ) : (
         <div className="card" style={{ overflowX: "auto" }}>
           <table>
-            <thead><tr><th>Mașină</th><th>Șofer</th><th>Încasat</th><th>Restanțe</th></tr></thead>
+            <thead><tr><th>Mașină</th><th>Șofer</th><th>Plan lună</th><th>Adus</th><th>Rest</th></tr></thead>
             <tbody>
-              {perCar.map(({ car, driver, paid, restanta }) => (
+              {perCar.map(({ car, driver, plan, paid, rest, carryover }) => (
                 <tr key={car.id}>
                   <td style={{ fontWeight: 600 }}>{car.nr}</td>
                   <td>{driver ? driver.nume : "—"}</td>
+                  <td className="mono">{fmtMoney(plan)}{carryover > 0 ? <div style={{ fontSize: 10.5, color: "var(--orange)" }}>+{fmtMoney(carryover)} restanță</div> : null}</td>
                   <td className="mono" style={{ color: "var(--green)" }}>{fmtMoney(paid)}</td>
-                  <td className="mono" style={{ color: restanta > 0 ? "var(--orange)" : "var(--muted)" }}>{fmtMoney(restanta)}</td>
+                  <td className="mono" style={{ color: rest > 0 ? "var(--orange)" : "var(--muted)" }}>{fmtMoney(rest)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-    </div>
-  );
-}
-
-function ConfirmModal({ message, onConfirm, onCancel }) {
-  return (
-    <div className="modal-backdrop" onClick={onCancel}>
-      <div className="modal" style={{ maxWidth: 360 }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-          <AlertTriangle size={20} color="var(--red)" />
-          <div className="disp" style={{ fontWeight: 700, fontSize: 16 }}>Confirmă ștergerea</div>
-        </div>
-        <div style={{ fontSize: 13.5, marginBottom: 18 }}>{message}</div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn danger" style={{ flex: 1, justifyContent: "center" }} onClick={onConfirm}><Trash2 size={15} />Șterge</button>
-          <button className="btn" style={{ flex: 1, justifyContent: "center" }} onClick={onCancel}>Anulează</button>
-        </div>
-      </div>
     </div>
   );
 }
