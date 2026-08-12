@@ -620,6 +620,7 @@ function WeeklyCalendarView({ data, update }) {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [search, setSearch] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
   const ranges = weekRanges(year, month);
   const todayIdx = (year === now.getFullYear() && month === now.getMonth()) ? currentWeekIndex(year, month, now.getDate(), ranges) : -1;
 
@@ -669,6 +670,8 @@ function WeeklyCalendarView({ data, update }) {
           <CarWeekCard
             key={car.id} car={car} data={data} year={year} month={month} ranges={ranges}
             todayIdx={todayIdx} driver={data.drivers.find((d) => d.id === car.driverId)}
+            expanded={expandedId === car.id}
+            onToggle={() => setExpandedId(expandedId === car.id ? null : car.id)}
             onSetWeek={(weekIdx, cash, card) => setWeekAmount(car, weekIdx, cash, card)}
           />
         ))
@@ -677,41 +680,55 @@ function WeeklyCalendarView({ data, update }) {
   );
 }
 
-function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, onSetWeek }) {
+function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expanded, onToggle, onSetWeek }) {
   const carryover = carryoverFromPrevMonth(data, car, year, month);
   const planTotal = monthlyPlanWithCarry(data, car, year, month);
   const paidTotal = monthlyPaid(data, year, month, car.id);
   const restTotal = Math.max(planTotal - paidTotal, 0);
+  const rowStatus = restTotal <= 0 ? "paid" : paidTotal > 0 ? "partial" : "unpaid";
 
   return (
-    <div className="card" style={{ marginBottom: 12 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 8, marginBottom: 6 }}>
-        <div>
-          <div className="disp" style={{ fontWeight: 700, fontSize: 15 }}>{car.nr}</div>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>{driver ? driver.nume : "nealocat"} · {fmtRate(car)}</div>
+    <div className="card" style={{ marginBottom: 10, padding: 0, overflow: "hidden" }}>
+      <button
+        onClick={onToggle}
+        style={{ width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "14px 16px", background: "transparent", border: "none", cursor: "pointer", color: "var(--text)", textAlign: "left" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <ChevronRight size={16} color="var(--muted)" style={{ transform: expanded ? "rotate(90deg)" : "none", transition: ".15s", flexShrink: 0 }} />
+          <div style={{ minWidth: 0 }}>
+            <div className="disp" style={{ fontWeight: 700, fontSize: 15 }}>{car.nr}</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{driver ? driver.nume : "nealocat"} · {fmtRate(car)}</div>
+          </div>
         </div>
-        <div style={{ textAlign: "right" }}>
-          <div style={{ fontSize: 11, color: "var(--muted)" }}>Plan lună{carryover > 0 ? " (cu restanță)" : ""}</div>
-          <div className="mono" style={{ fontWeight: 700 }}>{fmtMoney(planTotal)}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <StatusPill status={rowStatus} restanta={restTotal} />
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 10.5, color: "var(--muted)" }}>Plan lună</div>
+            <div className="mono" style={{ fontWeight: 700, fontSize: 13.5 }}>{fmtMoney(planTotal)}</div>
+          </div>
         </div>
-      </div>
+      </button>
 
-      {carryover > 0 && (
-        <div style={{ fontSize: 12, color: "var(--orange)", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
-          <AlertTriangle size={13} /> din care {fmtMoney(carryover)} restanță din luna trecută
+      {expanded && (
+        <div style={{ padding: "0 16px 16px" }}>
+          {carryover > 0 && (
+            <div style={{ fontSize: 12, color: "var(--orange)", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
+              <AlertTriangle size={13} /> din care {fmtMoney(carryover)} restanță din luna trecută
+            </div>
+          )}
+
+          <div style={{ marginBottom: 8 }}>
+            {ranges.map((r, i) => (
+              <WeekRow key={i} car={car} data={data} year={year} month={month} weekIdx={i} range={r} isCurrent={i === todayIdx} onSet={(cash, card) => onSetWeek(i, cash, card)} />
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 16, fontSize: 12.5, borderTop: "1px solid var(--border)", paddingTop: 8, flexWrap: "wrap" }}>
+            <div>Adus: <span className="mono" style={{ color: "var(--green)", fontWeight: 700 }}>{fmtMoney(paidTotal)}</span></div>
+            <div>Rest: <span className="mono" style={{ color: restTotal > 0 ? "var(--orange)" : "var(--muted)", fontWeight: 700 }}>{fmtMoney(restTotal)}</span></div>
+          </div>
         </div>
       )}
-
-      <div style={{ marginBottom: 8 }}>
-        {ranges.map((r, i) => (
-          <WeekRow key={i} car={car} data={data} year={year} month={month} weekIdx={i} range={r} isCurrent={i === todayIdx} onSet={(cash, card) => onSetWeek(i, cash, card)} />
-        ))}
-      </div>
-
-      <div style={{ display: "flex", gap: 16, fontSize: 12.5, borderTop: "1px solid var(--border)", paddingTop: 8, flexWrap: "wrap" }}>
-        <div>Adus: <span className="mono" style={{ color: "var(--green)", fontWeight: 700 }}>{fmtMoney(paidTotal)}</span></div>
-        <div>Rest: <span className="mono" style={{ color: restTotal > 0 ? "var(--orange)" : "var(--muted)", fontWeight: 700 }}>{fmtMoney(restTotal)}</span></div>
-      </div>
     </div>
   );
 }
