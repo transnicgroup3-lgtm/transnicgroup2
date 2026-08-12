@@ -792,6 +792,8 @@ function insuranceStatus(days) {
 function InsuranceView({ data, update }) {
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("toate");
   const empty = { carId: data.cars[0] ? data.cars[0].id : "", tip: "Asigurare simplă", dataExpirare: "" };
 
   const save = (ins) => {
@@ -803,10 +805,17 @@ function InsuranceView({ data, update }) {
   };
   const remove = (id) => update((prev) => ({ ...prev, insurances: prev.insurances.filter((i) => i.id !== id) }));
 
-  const sorted = useMemo(
-    () => [...data.insurances].sort((a, b) => (a.dataExpirare || "").localeCompare(b.dataExpirare || "")),
-    [data.insurances]
-  );
+  const sorted = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return [...data.insurances]
+      .filter((ins) => {
+        if (statusFilter !== "toate" && insuranceStatus(daysUntil(ins.dataExpirare)) !== statusFilter) return false;
+        if (!term) return true;
+        const car = data.cars.find((c) => c.id === ins.carId);
+        return car && (car.nr.toLowerCase().includes(term) || `${car.marca} ${car.model}`.toLowerCase().includes(term));
+      })
+      .sort((a, b) => (a.dataExpirare || "").localeCompare(b.dataExpirare || ""));
+  }, [data.insurances, data.cars, search, statusFilter]);
 
   return (
     <div>
@@ -817,9 +826,24 @@ function InsuranceView({ data, update }) {
 
       {data.cars.length === 0 ? (
         <div className="card"><EmptyState text="Adaugă mai întâi o mașină, apoi îi poți atașa asigurări." /></div>
-      ) : data.insurances.length === 0 ? (
-        <div className="card"><EmptyState text="Nicio asigurare/document înregistrat încă." /></div>
       ) : (
+        <>
+          <div className="field" style={{ marginBottom: 10 }}>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Caută mașină după număr, marcă sau model…" />
+          </div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+            {[
+              { id: "toate", label: "Toate" },
+              { id: "ok", label: "Valabile" },
+              { id: "soon", label: "Expiră curând" },
+              { id: "expired", label: "Expirate" },
+            ].map((f) => (
+              <button key={f.id} className={"btn" + (statusFilter === f.id ? " primary" : "")} style={{ padding: "7px 12px", fontSize: 12.5 }} onClick={() => setStatusFilter(f.id)}>{f.label}</button>
+            ))}
+          </div>
+          {sorted.length === 0 ? (
+            <div className="card"><EmptyState text="Nimic găsit pentru filtrul ales." /></div>
+          ) : (
         <div className="card" style={{ overflowX: "auto" }}>
           <table>
             <thead><tr><th>Mașină</th><th>Tip</th><th>Expiră</th><th>Stare</th><th></th></tr></thead>
@@ -844,6 +868,8 @@ function InsuranceView({ data, update }) {
             </tbody>
           </table>
         </div>
+      )}
+        </>
       )}
 
       {editing && (
@@ -900,6 +926,8 @@ function InsuranceForm({ ins, cars, onSave, onCancel }) {
 function InspectionView({ data, update }) {
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("toate");
   const empty = { carId: data.cars[0] ? data.cars[0].id : "", dataExpirare: "" };
 
   const save = (insp) => {
@@ -911,10 +939,17 @@ function InspectionView({ data, update }) {
   };
   const remove = (id) => update((prev) => ({ ...prev, inspections: prev.inspections.filter((i) => i.id !== id) }));
 
-  const sorted = useMemo(
-    () => [...data.inspections].sort((a, b) => (a.dataExpirare || "").localeCompare(b.dataExpirare || "")),
-    [data.inspections]
-  );
+  const sorted = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return [...data.inspections]
+      .filter((insp) => {
+        if (statusFilter !== "toate" && insuranceStatus(daysUntil(insp.dataExpirare)) !== statusFilter) return false;
+        if (!term) return true;
+        const car = data.cars.find((c) => c.id === insp.carId);
+        return car && (car.nr.toLowerCase().includes(term) || `${car.marca} ${car.model}`.toLowerCase().includes(term));
+      })
+      .sort((a, b) => (a.dataExpirare || "").localeCompare(b.dataExpirare || ""));
+  }, [data.inspections, data.cars, search, statusFilter]);
 
   return (
     <div>
@@ -925,9 +960,24 @@ function InspectionView({ data, update }) {
 
       {data.cars.length === 0 ? (
         <div className="card"><EmptyState text="Adaugă mai întâi o mașină, apoi îi poți atașa o revizie tehnică." /></div>
-      ) : data.inspections.length === 0 ? (
-        <div className="card"><EmptyState text="Nicio revizie tehnică înregistrată încă." /></div>
       ) : (
+        <>
+          <div className="field" style={{ marginBottom: 10 }}>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Caută mașină după număr, marcă sau model…" />
+          </div>
+          <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+            {[
+              { id: "toate", label: "Toate" },
+              { id: "ok", label: "Valabile" },
+              { id: "soon", label: "Expiră curând" },
+              { id: "expired", label: "Expirate" },
+            ].map((f) => (
+              <button key={f.id} className={"btn" + (statusFilter === f.id ? " primary" : "")} style={{ padding: "7px 12px", fontSize: 12.5 }} onClick={() => setStatusFilter(f.id)}>{f.label}</button>
+            ))}
+          </div>
+          {sorted.length === 0 ? (
+            <div className="card"><EmptyState text="Nimic găsit pentru filtrul ales." /></div>
+          ) : (
         <div className="card" style={{ overflowX: "auto" }}>
           <table>
             <thead><tr><th>Mașină</th><th>Valabilă până la</th><th>Stare</th><th></th></tr></thead>
@@ -951,6 +1001,8 @@ function InspectionView({ data, update }) {
             </tbody>
           </table>
         </div>
+      )}
+        </>
       )}
 
       {editing && (
