@@ -16,7 +16,20 @@ import {
 ---------------------------------------------------------------- */
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const todayISO = () => new Date().toISOString().slice(0, 10);
+function nowMoldova() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Chisinau",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).formatToParts(new Date());
+  const get = (t) => Number(parts.find((p) => p.type === t).value);
+  const hour = get("hour");
+  return new Date(get("year"), get("month") - 1, get("day"), hour === 24 ? 0 : hour, get("minute"), get("second"));
+}
+const todayISO = () => {
+  const n = nowMoldova();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+};
 const MONTHS_RO = ["Ianuarie","Februarie","Martie","Aprilie","Mai","Iunie","Iulie","August","Septembrie","Octombrie","Noiembrie","Decembrie"];
 const MONTHS_RO_SHORT = ["Ian","Feb","Mar","Apr","Mai","Iun","Iul","Aug","Sep","Oct","Noi","Dec"];
 
@@ -75,6 +88,11 @@ function isDayActive(car, year, month, day) {
   const startOnly = new Date(s.getFullYear(), s.getMonth(), s.getDate());
   return new Date(year, month, day) >= startOnly;
 }
+function isDayElapsed(year, month, day) {
+  const now = nowMoldova();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return new Date(year, month, day) <= today;
+}
 function workingDaysEffective(data, car, year, month, weekIdx, ranges) {
   const r = ranges[weekIdx];
   const rec = weeklyRecord(data, year, month, car.id, weekIdx);
@@ -82,6 +100,7 @@ function workingDaysEffective(data, car, year, month, weekIdx, ranges) {
   for (let d = r.start; d <= r.end; d++) {
     if (isSunday(year, month, d)) continue;
     if (!isDayActive(car, year, month, d)) continue;
+    if (!isDayElapsed(year, month, d)) continue;
     if (rec && rec.mode === "daily" && rec.dailyAmounts) {
       const dayRec = rec.dailyAmounts[d];
       if (dayRec && dayRec.worked === false) continue;
@@ -326,7 +345,7 @@ function Shell({ tab, setTab, children, loading, saveError }) {
 /* ============================== DASHBOARD ============================== */
 
 function Dashboard({ data, setTab }) {
-  const now = new Date();
+  const now = nowMoldova();
   const year = now.getFullYear(), month = now.getMonth(), day = now.getDate();
   const ranges = weekRanges(year, month);
   const wIdx = currentWeekIndex(year, month, day, ranges);
@@ -669,7 +688,7 @@ function DriverForm({ driver, onSave, onCancel }) {
 /* ============================== WEEKLY CALENDAR ============================== */
 
 function WeeklyCalendarView({ data, update }) {
-  const now = new Date();
+  const now = nowMoldova();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [search, setSearch] = useState("");
@@ -1236,7 +1255,7 @@ function InspectionForm({ insp, cars, onSave, onCancel }) {
 /* ============================== FINANCE ============================== */
 
 function FinanceView({ data, update }) {
-  const now = new Date();
+  const now = nowMoldova();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const mk = monthKey(year, month);
@@ -1395,7 +1414,7 @@ function IncomeForm({ onSave, onCancel }) {
 /* ============================== REPORTS ============================== */
 
 function ReportsView({ data }) {
-  const now = new Date();
+  const now = nowMoldova();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
 
