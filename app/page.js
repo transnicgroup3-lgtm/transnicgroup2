@@ -252,7 +252,8 @@ function Shell({ tab, setTab, children, loading, saveError }) {
         .modetoggle button{padding:6px 9px;font-size:11.5px;font-weight:600;background:transparent;color:var(--muted);border:none;cursor:pointer}
         .modetoggle button+button{border-left:1px solid var(--border)}
         .modetoggle button.active{background:var(--amber);color:#14171c}
-        .dayrow{display:grid;grid-template-columns:62px 1fr 1fr;gap:8px;align-items:center}
+        .dayrow{padding-bottom:6px;border-bottom:1px solid #ffffff08}
+        .dayrow:last-child{border-bottom:none;padding-bottom:0}
         @media (max-width: 680px){
           .finance-grid{grid-template-columns:1fr}
           .tfp-navbtn{padding:11px 14px;font-size:14px}
@@ -681,13 +682,16 @@ function WeeklyCalendarView({ data, update }) {
     });
   };
 
-  const setWeekDay = (car, weekIdx, day, cash, card) => {
+  const setWeekDay = (car, weekIdx, day, entry) => {
     const k = weekKey(year, month, car.id, weekIdx);
     update((prev) => {
       const existing = prev.weeklyPayments[k] || { year, month, carId: car.id, weekIdx, mode: "daily", paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
-      const dailyAmounts = { ...(existing.dailyAmounts || {}), [day]: { cash: Number(cash || 0), card: Number(card || 0) } };
-      const paidCash = Object.values(dailyAmounts).reduce((s, d) => s + Number(d.cash || 0), 0);
-      const paidCard = Object.values(dailyAmounts).reduce((s, d) => s + Number(d.card || 0), 0);
+      const prevDay = (existing.dailyAmounts || {})[day] || {};
+      const merged = { worked: true, cash: 0, card: 0, note: "", ...prevDay, ...entry };
+      if (!merged.worked) { merged.cash = 0; merged.card = 0; }
+      const dailyAmounts = { ...(existing.dailyAmounts || {}), [day]: merged };
+      const paidCash = Object.values(dailyAmounts).reduce((s, d) => s + (d.worked === false ? 0 : Number(d.cash || 0)), 0);
+      const paidCard = Object.values(dailyAmounts).reduce((s, d) => s + (d.worked === false ? 0 : Number(d.card || 0)), 0);
       const paidAmount = paidCash + paidCard;
       const rec = { ...existing, year, month, carId: car.id, weekIdx, mode: "daily", dailyAmounts, paidCash, paidCard, paidAmount };
       return { ...prev, weeklyPayments: { ...prev.weeklyPayments, [k]: rec } };
@@ -721,7 +725,7 @@ function WeeklyCalendarView({ data, update }) {
             onToggle={() => setExpandedId(expandedId === car.id ? null : car.id)}
             onSetWeekTotal={(weekIdx, cash, card) => setWeekTotal(car, weekIdx, cash, card)}
             onSetWeekMode={(weekIdx, mode) => setWeekMode(car, weekIdx, mode)}
-            onSetWeekDay={(weekIdx, day, cash, card) => setWeekDay(car, weekIdx, day, cash, card)}
+            onSetWeekDay={(weekIdx, day, entry) => setWeekDay(car, weekIdx, day, entry)}
           />
         ))
       )}
@@ -851,22 +855,47 @@ function WeekRow({ car, data, year, month, weekIdx, range, ranges, isCurrent, on
 
 function DayRow({ year, month, day, rec, onSetDay }) {
   const existing = rec && rec.dailyAmounts ? rec.dailyAmounts[day] : null;
+  const worked = existing ? existing.worked !== false : true;
   const [cash, setCash] = useState(existing ? existing.cash : "");
   const [card, setCard] = useState(existing ? existing.card : "");
+  const [note, setNote] = useState(existing ? existing.note || "" : "");
 
   useEffect(() => {
     setCash(existing ? existing.cash : "");
     setCard(existing ? existing.card : "");
+    setNote(existing ? existing.note || "" : "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year, month, day]);
 
-  const commit = () => onSetDay(day, cash, card);
+  const commitAmounts = () => onSetDay(day, { cash, card, worked: true });
+  const commitNote = (val) => onSetDay(day, { note: val, worked: false });
+  const toggleWorked = (nextWorked) => {
+    if (nextWorked) onSetDay(day, { worked: true });
+    else onSetDay(day, { worked: false, note });
+  };
 
   return (
-    <div className="dayrow">
-      <div style={{ fontSize: 12, color: "var(--muted)", width: 62, flexShrink: 0 }}>{dayLabel(year, month, day)}</div>
-      <input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commit} />
-      <input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commit} />
+    <div className="dayrow" style={{ display: "block" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", width: 62, flexShrink: 0 }}>{dayLabel(year, month, day)}</div>
+        <div className="modetoggle">
+          <button type="button" className={worked ? "active" : ""} onClick={() => toggleWorked(true)}>A lucrat</button>
+          <button type="button" className={!worked ? "active" : ""} onClick={() => toggleWorked(false)}>Nu a lucrat</button>
+        </div>
+      </div>
+      {worked ? (
+        <div style={{ display: "flex", gap: 8, marginTop: 6, marginLeft: 70 }}>
+          <input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commitAmounts} />
+          <input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commitAmounts} />
+        </div>
+      ) : (
+        <div style={{ marginTop: 6, marginLeft: 70 }}>
+          <input
+            type="text" placeholder="Motiv (ex: service, liber, concediu)"
+            value={note} onChange={(e) => setNote(e.target.value)} onBlur={(e) => commitNote(e.target.value)}
+          />
+        </div>
+      )}
     </div>
   );
 }
