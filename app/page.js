@@ -62,13 +62,34 @@ function dailyRate(car, year, month) {
 function fmtRate(car) {
   return car.tarifPeriod === "luna" ? `${fmtMoney(car.tarif)}/lună` : `${fmtMoney(car.tarif)}/zi`;
 }
-function monthlyPlanBase(car, year, month) { return dailyRate(car, year, month) * workingDaysInMonth(year, month); }
 
 function weekKey(year, month, carId, weekIdx) { return `${year}-${String(month + 1).padStart(2, "0")}__${carId}__${weekIdx}`; }
 function weeklyRecord(data, year, month, carId, weekIdx) { return data.weeklyPayments[weekKey(year, month, carId, weekIdx)] || null; }
 function weeklyPaid(data, year, month, carId, weekIdx) {
   const r = weeklyRecord(data, year, month, carId, weekIdx);
   return r ? Number(r.paidAmount || 0) : 0;
+}
+function workingDaysEffective(data, year, month, carId, weekIdx, ranges) {
+  const r = ranges[weekIdx];
+  const rec = weeklyRecord(data, year, month, carId, weekIdx);
+  if (rec && rec.mode === "daily" && rec.dailyAmounts) {
+    let count = 0;
+    for (let d = r.start; d <= r.end; d++) {
+      if (isSunday(year, month, d)) continue;
+      const dayRec = rec.dailyAmounts[d];
+      if (dayRec && dayRec.worked === false) continue;
+      count++;
+    }
+    return count;
+  }
+  return workingDaysInRange(year, month, r.start, r.end);
+}
+function monthlyPlanBase(data, car, year, month) {
+  const ranges = weekRanges(year, month);
+  const rate = dailyRate(car, year, month);
+  let total = 0;
+  for (let i = 0; i < ranges.length; i++) total += rate * workingDaysEffective(data, year, month, car.id, i, ranges);
+  return total;
 }
 function monthlyPaid(data, year, month, carId) {
   const ranges = weekRanges(year, month);
@@ -91,11 +112,10 @@ function carryoverFromPrevMonth(data, car, year, month) {
   return Math.max(plan - paid, 0);
 }
 function monthlyPlanWithCarry(data, car, year, month) {
-  return monthlyPlanBase(car, year, month) + carryoverFromPrevMonth(data, car, year, month);
+  return monthlyPlanBase(data, car, year, month) + carryoverFromPrevMonth(data, car, year, month);
 }
 function weekPlan(data, car, year, month, weekIdx, ranges) {
-  const r = ranges[weekIdx];
-  const base = dailyRate(car, year, month) * workingDaysInRange(year, month, r.start, r.end);
+  const base = dailyRate(car, year, month) * workingDaysEffective(data, year, month, car.id, weekIdx, ranges);
   return weekIdx === 0 ? base + carryoverFromPrevMonth(data, car, year, month) : base;
 }
 
