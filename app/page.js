@@ -69,26 +69,32 @@ function weeklyPaid(data, year, month, carId, weekIdx) {
   const r = weeklyRecord(data, year, month, carId, weekIdx);
   return r ? Number(r.paidAmount || 0) : 0;
 }
-function workingDaysEffective(data, year, month, carId, weekIdx, ranges) {
+function isDayActive(car, year, month, day) {
+  if (!car.startDate) return true;
+  const s = new Date(car.startDate);
+  const startOnly = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+  return new Date(year, month, day) >= startOnly;
+}
+function workingDaysEffective(data, car, year, month, weekIdx, ranges) {
   const r = ranges[weekIdx];
-  const rec = weeklyRecord(data, year, month, carId, weekIdx);
-  if (rec && rec.mode === "daily" && rec.dailyAmounts) {
-    let count = 0;
-    for (let d = r.start; d <= r.end; d++) {
-      if (isSunday(year, month, d)) continue;
+  const rec = weeklyRecord(data, year, month, car.id, weekIdx);
+  let count = 0;
+  for (let d = r.start; d <= r.end; d++) {
+    if (isSunday(year, month, d)) continue;
+    if (!isDayActive(car, year, month, d)) continue;
+    if (rec && rec.mode === "daily" && rec.dailyAmounts) {
       const dayRec = rec.dailyAmounts[d];
       if (dayRec && dayRec.worked === false) continue;
-      count++;
     }
-    return count;
+    count++;
   }
-  return workingDaysInRange(year, month, r.start, r.end);
+  return count;
 }
 function monthlyPlanBase(data, car, year, month) {
   const ranges = weekRanges(year, month);
   const rate = dailyRate(car, year, month);
   let total = 0;
-  for (let i = 0; i < ranges.length; i++) total += rate * workingDaysEffective(data, year, month, car.id, i, ranges);
+  for (let i = 0; i < ranges.length; i++) total += rate * workingDaysEffective(data, car, year, month, i, ranges);
   return total;
 }
 function monthlyPaid(data, year, month, carId) {
@@ -106,6 +112,12 @@ function prevMonth(year, month) { return month === 0 ? { year: year - 1, month: 
 
 function carryoverFromPrevMonth(data, car, year, month) {
   const pm = prevMonth(year, month);
+  if (car.startDate) {
+    const s = new Date(car.startDate);
+    const startOnly = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+    const lastDayPrevMonth = new Date(pm.year, pm.month, daysInMonth(pm.year, pm.month));
+    if (lastDayPrevMonth < startOnly) return 0;
+  }
   if (!hasAnyRecordForMonth(data, pm.year, pm.month, car.id)) return 0;
   const plan = monthlyPlanWithCarry(data, car, pm.year, pm.month);
   const paid = monthlyPaid(data, pm.year, pm.month, car.id);
@@ -115,7 +127,7 @@ function monthlyPlanWithCarry(data, car, year, month) {
   return monthlyPlanBase(data, car, year, month) + carryoverFromPrevMonth(data, car, year, month);
 }
 function weekPlan(data, car, year, month, weekIdx, ranges) {
-  const base = dailyRate(car, year, month) * workingDaysEffective(data, year, month, car.id, weekIdx, ranges);
+  const base = dailyRate(car, year, month) * workingDaysEffective(data, car, year, month, weekIdx, ranges);
   return weekIdx === 0 ? base + carryoverFromPrevMonth(data, car, year, month) : base;
 }
 
@@ -718,6 +730,13 @@ function WeeklyCalendarView({ data, update }) {
     });
   };
 
+  const setCarStartDate = (car, dateStr) => {
+    update((prev) => ({
+      ...prev,
+      cars: prev.cars.map((c) => (c.id === car.id ? { ...c, startDate: dateStr || null } : c)),
+    }));
+  };
+
   if (data.cars.length === 0) {
     return <div className="card"><EmptyState text="Adaugă cel puțin o mașină pentru a folosi calendarul." /></div>;
   }
@@ -746,6 +765,7 @@ function WeeklyCalendarView({ data, update }) {
             onSetWeekTotal={(weekIdx, cash, card) => setWeekTotal(car, weekIdx, cash, card)}
             onSetWeekMode={(weekIdx, mode) => setWeekMode(car, weekIdx, mode)}
             onSetWeekDay={(weekIdx, day, entry) => setWeekDay(car, weekIdx, day, entry)}
+            onSetStartDate={(dateStr) => setCarStartDate(car, dateStr)}
           />
         ))
       )}
@@ -753,12 +773,21 @@ function WeeklyCalendarView({ data, update }) {
   );
 }
 
-function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expanded, onToggle, onSetWeekTotal, onSetWeekMode, onSetWeekDay }) {
+function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expanded, onToggle, onSetWeekTotal, onSetWeekMode, onSetWeekDay, onSetStartDate }) {
   const carryover = carryoverFromPrevMonth(data, car, year, month);
   const planTotal = monthlyPlanWithCarry(data, car, year, month);
   const paidTotal = monthlyPaid(data, year, month, car.id);
   const restTotal = Math.max(planTotal - paidTotal, 0);
   const rowStatus = restTotal <= 0 ? "paid" : paidTotal > 0 ? "partial" : "unpaid";
+  const [editingStart, setEditingStart] = useState(false);
+  const [startVal, setStartVal] = useState(car.startDate || `${year}-${String(month + 1).padStart(2, "0")}-01`);
+
+  const saveStart = (val) => { onSetStartDate(val); setEditingStart(false); };
+  const clearStart = (e) => { e.stopPropagation(); onSetStartDate(null); };
+  const quickThisMonth = (e) => {
+    e.stopPropagation();
+    saveStart(`${year}-${String(month + 1).padStart(2, "0")}-01`);
+  };
 
   return (
     <div className="card" style={{ marginBottom: 10, padding: 0, overflow: "hidden" }}>
@@ -781,6 +810,27 @@ function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expande
           </div>
         </div>
       </button>
+
+      <div style={{ padding: "0 16px 10px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {car.startDate ? (
+          <span className="pill" style={{ background: "#ffffff0d", color: "var(--muted)" }}>
+            Activ din {new Date(car.startDate).toLocaleDateString("ro-RO")}
+            <button type="button" onClick={(e) => { e.stopPropagation(); setEditingStart((v) => !v); }} style={{ background: "none", border: "none", padding: 0, marginLeft: 4, cursor: "pointer", color: "var(--muted)", display: "flex" }}><Pencil size={11} /></button>
+            <button type="button" onClick={clearStart} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--muted)", display: "flex" }}><X size={12} /></button>
+          </span>
+        ) : (
+          <>
+            <button type="button" className="quickbtn" style={{ flex: "none", padding: "5px 9px" }} onClick={quickThisMonth}>A început să lucreze luna asta</button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setEditingStart((v) => !v); }} style={{ background: "none", border: "none", padding: "4px 2px", cursor: "pointer", color: "var(--muted)", fontSize: 11.5, textDecoration: "underline" }}>alege altă dată</button>
+          </>
+        )}
+        {editingStart && (
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="date" value={startVal} onChange={(e) => setStartVal(e.target.value)} style={{ width: 145, padding: "5px 8px" }} onClick={(e) => e.stopPropagation()} />
+            <button type="button" className="btn" style={{ padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); saveStart(startVal); }}>Salvează</button>
+          </span>
+        )}
+      </div>
 
       {expanded && (
         <div style={{ padding: "0 16px 16px" }}>
