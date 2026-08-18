@@ -16,7 +16,20 @@ import {
 ---------------------------------------------------------------- */
 
 const uid = () => Math.random().toString(36).slice(2, 10);
-const todayISO = () => new Date().toISOString().slice(0, 10);
+function nowMoldova() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Chisinau",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+  }).formatToParts(new Date());
+  const get = (t) => Number(parts.find((p) => p.type === t).value);
+  const hour = get("hour");
+  return new Date(get("year"), get("month") - 1, get("day"), hour === 24 ? 0 : hour, get("minute"), get("second"));
+}
+const todayISO = () => {
+  const n = nowMoldova();
+  return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+};
 const MONTHS_RO = ["Ianuarie","Februarie","Martie","Aprilie","Mai","Iunie","Iulie","August","Septembrie","Octombrie","Noiembrie","Decembrie"];
 const MONTHS_RO_SHORT = ["Ian","Feb","Mar","Apr","Mai","Iun","Iul","Aug","Sep","Oct","Noi","Dec"];
 
@@ -53,7 +66,6 @@ function weekRanges(year, month) {
 function workingDaysInMonth(year, month) { return workingDaysInRange(year, month, 1, daysInMonth(year, month)); }
 
 function dailyRate(car, year, month) {
-  if (car.status !== "activa") return 0;
   if (car.tarifPeriod === "luna") {
     const wd = workingDaysInMonth(year, month);
     return wd > 0 ? (Number(car.tarif) || 0) / wd : 0;
@@ -63,13 +75,46 @@ function dailyRate(car, year, month) {
 function fmtRate(car) {
   return car.tarifPeriod === "luna" ? `${fmtMoney(car.tarif)}/lună` : `${fmtMoney(car.tarif)}/zi`;
 }
-function monthlyPlanBase(car, year, month) { return dailyRate(car, year, month) * workingDaysInMonth(year, month); }
 
 function weekKey(year, month, carId, weekIdx) { return `${year}-${String(month + 1).padStart(2, "0")}__${carId}__${weekIdx}`; }
 function weeklyRecord(data, year, month, carId, weekIdx) { return data.weeklyPayments[weekKey(year, month, carId, weekIdx)] || null; }
 function weeklyPaid(data, year, month, carId, weekIdx) {
   const r = weeklyRecord(data, year, month, carId, weekIdx);
   return r ? Number(r.paidAmount || 0) : 0;
+}
+function isDayActive(car, year, month, day) {
+  if (!car.startDate) return true;
+  const s = new Date(car.startDate);
+  const startOnly = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+  return new Date(year, month, day) >= startOnly;
+}
+function isDayElapsed(year, month, day) {
+  const now = nowMoldova();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return new Date(year, month, day) <= today;
+}
+function workingDaysEffective(data, car, year, month, weekIdx, ranges) {
+  const r = ranges[weekIdx];
+  const rec = weeklyRecord(data, year, month, car.id, weekIdx);
+  let count = 0;
+  for (let d = r.start; d <= r.end; d++) {
+    if (isSunday(year, month, d)) continue;
+    if (!isDayActive(car, year, month, d)) continue;
+    if (!isDayElapsed(year, month, d)) continue;
+    if (rec && rec.mode === "daily" && rec.dailyAmounts) {
+      const dayRec = rec.dailyAmounts[d];
+      if (dayRec && dayRec.worked === false) continue;
+    }
+    count++;
+  }
+  return count;
+}
+function monthlyPlanBase(data, car, year, month) {
+  const ranges = weekRanges(year, month);
+  const rate = dailyRate(car, year, month);
+  let total = 0;
+  for (let i = 0; i < ranges.length; i++) total += rate * workingDaysEffective(data, car, year, month, i, ranges);
+  return total;
 }
 function monthlyPaid(data, year, month, carId) {
   const ranges = weekRanges(year, month);
@@ -86,18 +131,38 @@ function prevMonth(year, month) { return month === 0 ? { year: year - 1, month: 
 
 function carryoverFromPrevMonth(data, car, year, month) {
   const pm = prevMonth(year, month);
+  if (car.startDate) {
+    const s = new Date(car.startDate);
+    const startOnly = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+    const lastDayPrevMonth = new Date(pm.year, pm.month, daysInMonth(pm.year, pm.month));
+    if (lastDayPrevMonth < startOnly) return 0;
+  }
   if (!hasAnyRecordForMonth(data, pm.year, pm.month, car.id)) return 0;
   const plan = monthlyPlanWithCarry(data, car, pm.year, pm.month);
   const paid = monthlyPaid(data, pm.year, pm.month, car.id);
   return Math.max(plan - paid, 0);
 }
 function monthlyPlanWithCarry(data, car, year, month) {
-  return monthlyPlanBase(car, year, month) + carryoverFromPrevMonth(data, car, year, month);
+  return monthlyPlanBase(data, car, year, month) + carryoverFromPrevMonth(data, car, year, month);
 }
 function weekPlan(data, car, year, month, weekIdx, ranges) {
-  const r = ranges[weekIdx];
-  const base = dailyRate(car, year, month) * workingDaysInRange(year, month, r.start, r.end);
+  const base = dailyRate(car, year, month) * workingDaysEffective(data, car, year, month, weekIdx, ranges);
   return weekIdx === 0 ? base + carryoverFromPrevMonth(data, car, year, month) : base;
+}
+
+const DAY_NAMES_RO = ["Duminică", "Luni", "Marți", "Miercuri", "Joi", "Vineri", "Sâmbătă"];
+function weekDays(year, month, weekIdx, ranges) {
+  const r = ranges[weekIdx];
+  const days = [];
+  for (let d = r.start; d <= r.end; d++) if (!isSunday(year, month, d)) days.push(d);
+  return days;
+}
+function dayLabel(year, month, day) {
+  return `${DAY_NAMES_RO[new Date(year, month, day).getDay()].slice(0, 3)} ${day}`;
+}
+function weeklyMode(data, year, month, carId, weekIdx) {
+  const r = weeklyRecord(data, year, month, carId, weekIdx);
+  return r && r.mode === "daily" ? "daily" : "total";
 }
 function statusOf(due, paid) {
   if (paid == null) return "pending";
@@ -108,12 +173,6 @@ function statusOf(due, paid) {
 function currentWeekIndex(year, month, day, ranges) {
   const idx = ranges.findIndex((r) => day >= r.start && day <= r.end);
   return idx === -1 ? ranges.length - 1 : idx;
-}
-const WEEKDAY_SHORT = ["Du", "Lu", "Ma", "Mi", "Jo", "Vi", "Sb"];
-function workingDaysList(year, month, range) {
-  const days = [];
-  for (let d = range.start; d <= range.end; d++) if (!isSunday(year, month, d)) days.push(d);
-  return days;
 }
 
 export default function TaxiFleetPro() {
@@ -238,8 +297,14 @@ function Shell({ tab, setTab, children, loading, saveError }) {
         .quickbtn:hover{background:#ffffff1a}
         .tfp-footer{padding:16px 20px;border-top:1px solid var(--border);text-align:center;font-size:12px;color:var(--muted)}
         .finance-grid{grid-template-columns:1fr 1fr}
-        .weekrow{display:grid;grid-template-columns:1fr auto auto auto;gap:10px;align-items:center;padding:9px 0;border-top:1px solid #ffffff0a}
+        .weekrow{padding:9px 0;border-top:1px solid #ffffff0a}
         .weekrow:first-child{border-top:none}
+        .modetoggle{display:flex;border:1px solid var(--border);border-radius:7px;overflow:hidden}
+        .modetoggle button{padding:6px 9px;font-size:11.5px;font-weight:600;background:transparent;color:var(--muted);border:none;cursor:pointer}
+        .modetoggle button+button{border-left:1px solid var(--border)}
+        .modetoggle button.active{background:var(--amber);color:#14171c}
+        .dayrow{padding-bottom:6px;border-bottom:1px solid #ffffff08}
+        .dayrow:last-child{border-bottom:none;padding-bottom:0}
         @media (max-width: 680px){
           .finance-grid{grid-template-columns:1fr}
           .tfp-navbtn{padding:11px 14px;font-size:14px}
@@ -280,7 +345,7 @@ function Shell({ tab, setTab, children, loading, saveError }) {
 /* ============================== DASHBOARD ============================== */
 
 function Dashboard({ data, setTab }) {
-  const now = new Date();
+  const now = nowMoldova();
   const year = now.getFullYear(), month = now.getMonth(), day = now.getDate();
   const ranges = weekRanges(year, month);
   const wIdx = currentWeekIndex(year, month, day, ranges);
@@ -623,7 +688,7 @@ function DriverForm({ driver, onSave, onCancel }) {
 /* ============================== WEEKLY CALENDAR ============================== */
 
 function WeeklyCalendarView({ data, update }) {
-  const now = new Date();
+  const now = nowMoldova();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [search, setSearch] = useState("");
@@ -645,21 +710,49 @@ function WeeklyCalendarView({ data, update }) {
     setMonth(m); setYear(y);
   };
 
-  const setWeekTotal = (car, weekIdx, cash, card, note) => {
+  const setWeekTotal = (car, weekIdx, cash, card) => {
     const k = weekKey(year, month, car.id, weekIdx);
     const paidAmount = Number(cash || 0) + Number(card || 0);
     update((prev) => ({
       ...prev,
-      weeklyPayments: { ...prev.weeklyPayments, [k]: { year, month, carId: car.id, weekIdx, mode: "total", paidCash: Number(cash || 0), paidCard: Number(card || 0), paidAmount, note: note || "" } },
+      weeklyPayments: {
+        ...prev.weeklyPayments,
+        [k]: { ...(prev.weeklyPayments[k] || {}), year, month, carId: car.id, weekIdx, mode: "total", paidCash: Number(cash || 0), paidCard: Number(card || 0), paidAmount },
+      },
     }));
   };
 
-  const setWeekDaily = (car, weekIdx, daysMap) => {
+  const setWeekMode = (car, weekIdx, mode) => {
     const k = weekKey(year, month, car.id, weekIdx);
-    const paidAmount = Object.values(daysMap).reduce((s, v) => s + Number(v.cash || 0) + Number(v.card || 0), 0);
+    update((prev) => {
+      const existing = prev.weeklyPayments[k];
+      const rec = existing
+        ? { ...existing, mode }
+        : { year, month, carId: car.id, weekIdx, mode, paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
+      return { ...prev, weeklyPayments: { ...prev.weeklyPayments, [k]: rec } };
+    });
+  };
+
+  const setWeekDay = (car, weekIdx, day, entry) => {
+    const k = weekKey(year, month, car.id, weekIdx);
+    update((prev) => {
+      const existing = prev.weeklyPayments[k] || { year, month, carId: car.id, weekIdx, mode: "daily", paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
+      const prevDay = (existing.dailyAmounts || {})[day] || {};
+      const merged = { worked: true, cash: 0, card: 0, note: "", ...prevDay, ...entry };
+      if (!merged.worked) { merged.cash = 0; merged.card = 0; }
+      const dailyAmounts = { ...(existing.dailyAmounts || {}), [day]: merged };
+      const paidCash = Object.values(dailyAmounts).reduce((s, d) => s + (d.worked === false ? 0 : Number(d.cash || 0)), 0);
+      const paidCard = Object.values(dailyAmounts).reduce((s, d) => s + (d.worked === false ? 0 : Number(d.card || 0)), 0);
+      const paidAmount = paidCash + paidCard;
+      const rec = { ...existing, year, month, carId: car.id, weekIdx, mode: "daily", dailyAmounts, paidCash, paidCard, paidAmount };
+      return { ...prev, weeklyPayments: { ...prev.weeklyPayments, [k]: rec } };
+    });
+  };
+
+  const setCarStartDate = (car, dateStr) => {
     update((prev) => ({
       ...prev,
-      weeklyPayments: { ...prev.weeklyPayments, [k]: { year, month, carId: car.id, weekIdx, mode: "daily", days: daysMap, paidAmount } },
+      cars: prev.cars.map((c) => (c.id === car.id ? { ...c, startDate: dateStr || null } : c)),
     }));
   };
 
@@ -688,8 +781,10 @@ function WeeklyCalendarView({ data, update }) {
             todayIdx={todayIdx} driver={data.drivers.find((d) => d.id === car.driverId)}
             expanded={expandedId === car.id}
             onToggle={() => setExpandedId(expandedId === car.id ? null : car.id)}
-            onSetTotal={(weekIdx, cash, card, note) => setWeekTotal(car, weekIdx, cash, card, note)}
-            onSetDaily={(weekIdx, daysMap) => setWeekDaily(car, weekIdx, daysMap)}
+            onSetWeekTotal={(weekIdx, cash, card) => setWeekTotal(car, weekIdx, cash, card)}
+            onSetWeekMode={(weekIdx, mode) => setWeekMode(car, weekIdx, mode)}
+            onSetWeekDay={(weekIdx, day, entry) => setWeekDay(car, weekIdx, day, entry)}
+            onSetStartDate={(dateStr) => setCarStartDate(car, dateStr)}
           />
         ))
       )}
@@ -697,13 +792,21 @@ function WeeklyCalendarView({ data, update }) {
   );
 }
 
-function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expanded, onToggle, onSetTotal, onSetDaily }) {
-  const isActive = car.status === "activa";
+function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expanded, onToggle, onSetWeekTotal, onSetWeekMode, onSetWeekDay, onSetStartDate }) {
   const carryover = carryoverFromPrevMonth(data, car, year, month);
   const planTotal = monthlyPlanWithCarry(data, car, year, month);
   const paidTotal = monthlyPaid(data, year, month, car.id);
   const restTotal = Math.max(planTotal - paidTotal, 0);
   const rowStatus = restTotal <= 0 ? "paid" : paidTotal > 0 ? "partial" : "unpaid";
+  const [editingStart, setEditingStart] = useState(false);
+  const [startVal, setStartVal] = useState(car.startDate || `${year}-${String(month + 1).padStart(2, "0")}-01`);
+
+  const saveStart = (val) => { onSetStartDate(val); setEditingStart(false); };
+  const clearStart = (e) => { e.stopPropagation(); onSetStartDate(null); };
+  const quickThisMonth = (e) => {
+    e.stopPropagation();
+    saveStart(`${year}-${String(month + 1).padStart(2, "0")}-01`);
+  };
 
   return (
     <div className="card" style={{ marginBottom: 10, padding: 0, overflow: "hidden" }}>
@@ -719,11 +822,7 @@ function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expande
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-          {isActive ? (
-            <StatusPill status={rowStatus} restanta={restTotal} />
-          ) : (
-            <span className="pill" style={{ background: "#8b93a122", color: "var(--muted)" }}>Inactivă — fără restanțe</span>
-          )}
+          <StatusPill status={rowStatus} restanta={restTotal} />
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 10.5, color: "var(--muted)" }}>Plan lună</div>
             <div className="mono" style={{ fontWeight: 700, fontSize: 13.5 }}>{fmtMoney(planTotal)}</div>
@@ -731,14 +830,30 @@ function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expande
         </div>
       </button>
 
+      <div style={{ padding: "0 16px 10px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {car.startDate ? (
+          <span className="pill" style={{ background: "#ffffff0d", color: "var(--muted)" }}>
+            Activ din {new Date(car.startDate).toLocaleDateString("ro-RO")}
+            <button type="button" onClick={(e) => { e.stopPropagation(); setEditingStart((v) => !v); }} style={{ background: "none", border: "none", padding: 0, marginLeft: 4, cursor: "pointer", color: "var(--muted)", display: "flex" }}><Pencil size={11} /></button>
+            <button type="button" onClick={clearStart} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--muted)", display: "flex" }}><X size={12} /></button>
+          </span>
+        ) : (
+          <>
+            <button type="button" className="quickbtn" style={{ flex: "none", padding: "5px 9px" }} onClick={quickThisMonth}>A început să lucreze luna asta</button>
+            <button type="button" onClick={(e) => { e.stopPropagation(); setEditingStart((v) => !v); }} style={{ background: "none", border: "none", padding: "4px 2px", cursor: "pointer", color: "var(--muted)", fontSize: 11.5, textDecoration: "underline" }}>alege altă dată</button>
+          </>
+        )}
+        {editingStart && (
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <input type="date" value={startVal} onChange={(e) => setStartVal(e.target.value)} style={{ width: 145, padding: "5px 8px" }} onClick={(e) => e.stopPropagation()} />
+            <button type="button" className="btn" style={{ padding: "5px 9px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); saveStart(startVal); }}>Salvează</button>
+          </span>
+        )}
+      </div>
+
       {expanded && (
         <div style={{ padding: "0 16px 16px" }}>
-          {!isActive && (
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
-              <AlertTriangle size={13} /> Mașina e marcată {car.status === "service" ? "în service" : "vândută"} — nu i se calculează plan sau restanțe cât timp e inactivă.
-            </div>
-          )}
-          {isActive && carryover > 0 && (
+          {carryover > 0 && (
             <div style={{ fontSize: 12, color: "var(--orange)", marginBottom: 8, display: "flex", alignItems: "center", gap: 5 }}>
               <AlertTriangle size={13} /> din care {fmtMoney(carryover)} restanță din luna trecută
             </div>
@@ -747,9 +862,10 @@ function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expande
           <div style={{ marginBottom: 8 }}>
             {ranges.map((r, i) => (
               <WeekRow
-                key={i} car={car} data={data} year={year} month={month} weekIdx={i} range={r} isCurrent={i === todayIdx}
-                onSetTotal={(cash, card, note) => onSetTotal(i, cash, card, note)}
-                onSetDaily={(daysMap) => onSetDaily(i, daysMap)}
+                key={i} car={car} data={data} year={year} month={month} weekIdx={i} range={r} ranges={ranges} isCurrent={i === todayIdx}
+                onSetTotal={(cash, card) => onSetWeekTotal(i, cash, card)}
+                onSetMode={(mode) => onSetWeekMode(i, mode)}
+                onSetDay={(day, cash, card) => onSetWeekDay(i, day, cash, card)}
               />
             ))}
           </div>
@@ -764,44 +880,30 @@ function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expande
   );
 }
 
-function WeekRow({ car, data, year, month, weekIdx, range, isCurrent, onSetTotal, onSetDaily }) {
+function WeekRow({ car, data, year, month, weekIdx, range, ranges, isCurrent, onSetTotal, onSetMode, onSetDay }) {
   const rec = weeklyRecord(data, year, month, car.id, weekIdx);
   const plan = weekPlan(data, car, year, month, weekIdx, weekRanges(year, month));
-  const [mode, setMode] = useState(rec ? rec.mode || "total" : "total");
-  const [cash, setCash] = useState(rec && rec.mode !== "daily" ? rec.paidCash : "");
-  const [card, setCard] = useState(rec && rec.mode !== "daily" ? rec.paidCard : "");
-  const [note, setNote] = useState(rec && rec.mode !== "daily" ? rec.note || "" : "");
-  const workDays = workingDaysList(year, month, range);
-  const [dayVals, setDayVals] = useState(() => {
-    const base = {};
-    workDays.forEach((d) => { base[d] = (rec && rec.mode === "daily" && rec.days[d]) ? rec.days[d] : { cash: "", card: "", note: "" }; });
-    return base;
-  });
+  const mode = rec && rec.mode === "daily" ? "daily" : "total";
+  const [cash, setCash] = useState(rec ? rec.paidCash : "");
+  const [card, setCard] = useState(rec ? rec.paidCard : "");
 
   useEffect(() => {
-    setMode(rec ? rec.mode || "total" : "total");
-    setCash(rec && rec.mode !== "daily" ? rec.paidCash : "");
-    setCard(rec && rec.mode !== "daily" ? rec.paidCard : "");
-    setNote(rec && rec.mode !== "daily" ? rec.note || "" : "");
-    const base = {};
-    workDays.forEach((d) => { base[d] = (rec && rec.mode === "daily" && rec.days[d]) ? rec.days[d] : { cash: "", card: "", note: "" }; });
-    setDayVals(base);
+    setCash(rec ? rec.paidCash : "");
+    setCard(rec ? rec.paidCard : "");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, month, weekIdx]);
+  }, [year, month, weekIdx, mode]);
 
   const paid = rec ? rec.paidAmount : null;
   const status = statusOf(plan, paid);
   const colors = { paid: "var(--green)", unpaid: "var(--red)", partial: "var(--orange)", pending: "var(--muted)" };
   const rest = Math.max(plan - (paid || 0), 0);
 
-  const commitTotal = () => onSetTotal(cash, card, note);
-  const setDayField = (d, field, val) => setDayVals((p) => ({ ...p, [d]: { ...p[d], [field]: val } }));
-  const commitDaily = () => onSetDaily(dayVals);
-  const switchMode = (m) => { setMode(m); if (m === "total") commitTotal(); else commitDaily(); };
+  const commitTotal = () => onSetTotal(cash, card);
+  const days = weekDays(year, month, weekIdx, ranges);
 
   return (
-    <div style={{ padding: "10px 0", borderTop: "1px solid #ffffff0a" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8, marginBottom: 8 }}>
+    <div className="weekrow" style={{ display: "block" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div>
           <div style={{ fontWeight: isCurrent ? 700 : 500, display: "flex", alignItems: "center", gap: 6 }}>
             Săpt {weekIdx + 1} <span style={{ color: "var(--muted)", fontWeight: 400 }}>({range.start}–{range.end})</span>
@@ -811,29 +913,76 @@ function WeekRow({ car, data, year, month, weekIdx, range, isCurrent, onSetTotal
             Plan {fmtMoney(plan)}{paid != null ? ` · adus ${fmtMoney(paid)}` : ""}{status === "partial" ? ` · mai are ${fmtMoney(rest)}` : ""}
           </div>
         </div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button className={"btn" + (mode === "total" ? " primary" : "")} style={{ padding: "6px 10px", fontSize: 12 }} onClick={() => switchMode("total")}>Total</button>
-          <button className={"btn" + (mode === "daily" ? " primary" : "")} style={{ padding: "6px 10px", fontSize: 12 }} onClick={() => switchMode("daily")}>Pe zile</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className="modetoggle">
+            <button type="button" className={mode === "total" ? "active" : ""} onClick={() => onSetMode("total")}>Total</button>
+            <button type="button" className={mode === "daily" ? "active" : ""} onClick={() => onSetMode("daily")}>Pe zile</button>
+          </div>
           <StatusPill status={status} restanta={rest} />
         </div>
       </div>
 
       {mode === "total" ? (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <div style={{ width: 100 }}><input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commitTotal} /></div>
-          <div style={{ width: 100 }}><input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commitTotal} /></div>
-          <div style={{ flex: 1, minWidth: 140 }}><input value={note} onChange={(e) => setNote(e.target.value)} onBlur={commitTotal} placeholder="Descriere (opțional)" /></div>
+        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+          <div style={{ width: 90 }}>
+            <input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commitTotal} />
+          </div>
+          <div style={{ width: 90 }}>
+            <input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commitTotal} />
+          </div>
         </div>
       ) : (
-        <div>
-          {workDays.map((d) => (
-            <div key={d} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
-              <div style={{ width: 44, fontSize: 12, color: "var(--muted)", flexShrink: 0 }}>{WEEKDAY_SHORT[new Date(year, month, d).getDay()]} {d}</div>
-              <div style={{ width: 90 }}><input type="number" placeholder="Numerar" value={dayVals[d]?.cash ?? ""} onChange={(e) => setDayField(d, "cash", e.target.value)} onBlur={commitDaily} /></div>
-              <div style={{ width: 90 }}><input type="number" placeholder="Card" value={dayVals[d]?.card ?? ""} onChange={(e) => setDayField(d, "card", e.target.value)} onBlur={commitDaily} /></div>
-              <div style={{ flex: 1, minWidth: 120 }}><input value={dayVals[d]?.note ?? ""} onChange={(e) => setDayField(d, "note", e.target.value)} onBlur={commitDaily} placeholder="Descriere (opțional)" /></div>
-            </div>
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
+          {days.map((day) => (
+            <DayRow key={day} year={year} month={month} day={day} rec={rec} onSetDay={onSetDay} />
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DayRow({ year, month, day, rec, onSetDay }) {
+  const existing = rec && rec.dailyAmounts ? rec.dailyAmounts[day] : null;
+  const worked = existing ? existing.worked !== false : true;
+  const [cash, setCash] = useState(existing ? existing.cash : "");
+  const [card, setCard] = useState(existing ? existing.card : "");
+  const [note, setNote] = useState(existing ? existing.note || "" : "");
+
+  useEffect(() => {
+    setCash(existing ? existing.cash : "");
+    setCard(existing ? existing.card : "");
+    setNote(existing ? existing.note || "" : "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month, day]);
+
+  const commitAmounts = () => onSetDay(day, { cash, card, worked: true });
+  const commitNote = (val) => onSetDay(day, { note: val, worked: false });
+  const toggleWorked = (nextWorked) => {
+    if (nextWorked) onSetDay(day, { worked: true });
+    else onSetDay(day, { worked: false, note });
+  };
+
+  return (
+    <div className="dayrow" style={{ display: "block" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", width: 62, flexShrink: 0 }}>{dayLabel(year, month, day)}</div>
+        <div className="modetoggle">
+          <button type="button" className={worked ? "active" : ""} onClick={() => toggleWorked(true)}>A lucrat</button>
+          <button type="button" className={!worked ? "active" : ""} onClick={() => toggleWorked(false)}>Nu a lucrat</button>
+        </div>
+      </div>
+      {worked ? (
+        <div style={{ display: "flex", gap: 8, marginTop: 6, marginLeft: 70 }}>
+          <input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commitAmounts} />
+          <input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commitAmounts} />
+        </div>
+      ) : (
+        <div style={{ marginTop: 6, marginLeft: 70 }}>
+          <input
+            type="text" placeholder="Motiv (ex: service, liber, concediu)"
+            value={note} onChange={(e) => setNote(e.target.value)} onBlur={(e) => commitNote(e.target.value)}
+          />
         </div>
       )}
     </div>
@@ -1106,14 +1255,13 @@ function InspectionForm({ insp, cars, onSave, onCancel }) {
 /* ============================== FINANCE ============================== */
 
 function FinanceView({ data, update }) {
-  const now = new Date();
+  const now = nowMoldova();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const mk = monthKey(year, month);
   const [showExpense, setShowExpense] = useState(false);
   const [showIncome, setShowIncome] = useState(false);
   const [confirm, setConfirm] = useState(null);
-  const [showDay, setShowDay] = useState(false);
 
   const calendarIncome = Object.values(data.weeklyPayments)
     .filter((p) => p.year === year && p.month === month)
@@ -1145,11 +1293,10 @@ function FinanceView({ data, update }) {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <button className="btn" style={{ padding: 8 }} onClick={() => changeMonth(-1)}><ChevronLeft size={16} /></button>
         <div className="disp" style={{ fontSize: 18, fontWeight: 700, minWidth: 170, textAlign: "center" }}>{MONTHS_RO[month]} {year}</div>
         <button className="btn" style={{ padding: 8 }} onClick={() => changeMonth(1)}><ChevronRight size={16} /></button>
-        <button className="btn" style={{ marginLeft: "auto" }} onClick={() => setShowDay(true)}><CalendarIcon size={14} />Vezi cash/card pe zi</button>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px,1fr))", gap: 12, marginBottom: 18 }}>
@@ -1214,58 +1361,7 @@ function FinanceView({ data, update }) {
       {confirm && (
         <ConfirmModal message={confirm.message} onCancel={() => setConfirm(null)} onConfirm={() => { confirm.action(); setConfirm(null); }} />
       )}
-      {showDay && <DayCashCardModal data={data} year={year} month={month} onClose={() => setShowDay(false)} />}
     </div>
-  );
-}
-
-function DayCashCardModal({ data, year, month, onClose }) {
-  const [day, setDay] = useState(new Date().getDate());
-  const last = daysInMonth(year, month);
-
-  let cash = 0, card = 0;
-  const entries = [];
-  Object.values(data.weeklyPayments).forEach((p) => {
-    if (p.year !== year || p.month !== month || p.mode !== "daily" || !p.days || !p.days[day]) return;
-    const car = data.cars.find((c) => c.id === p.carId);
-    const dv = p.days[day];
-    cash += Number(dv.cash || 0);
-    card += Number(dv.card || 0);
-    if (Number(dv.cash || 0) > 0 || Number(dv.card || 0) > 0) {
-      entries.push({ car, cash: Number(dv.cash || 0), card: Number(dv.card || 0), note: dv.note });
-    }
-  });
-
-  return (
-    <Modal onClose={onClose} title="Cash / card pe zi">
-      <div className="field">
-        <label>Ziua</label>
-        <select value={day} onChange={(e) => setDay(Number(e.target.value))}>
-          {Array.from({ length: last }, (_, i) => i + 1).map((d) => <option key={d} value={d}>{d} {MONTHS_RO[month]}</option>)}
-        </select>
-      </div>
-
-      <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
-        <MiniStat label="Numerar" value={fmtMoney(cash)} color="var(--green)" />
-        <MiniStat label="Card" value={fmtMoney(card)} color="var(--amber)" />
-      </div>
-
-      {entries.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: "var(--muted)" }}>Nicio sumă introdusă „pe zile" pentru {day} {MONTHS_RO[month]}. (Sumele introduse ca total pe săptămână nu apar aici pe zi exactă — doar cele introduse prin „Pe zile" în Calendar.)</div>
-      ) : (
-        <table>
-          <tbody>
-            {entries.map((e, i) => (
-              <tr key={i}>
-                <td>{e.car ? e.car.nr : "—"}{e.note ? <div style={{ fontSize: 11, color: "var(--muted)" }}>{e.note}</div> : null}</td>
-                <td className="mono" style={{ color: "var(--green)" }}>{fmtMoney(e.cash)}</td>
-                <td className="mono" style={{ color: "var(--amber)" }}>{fmtMoney(e.card)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </Modal>
   );
 }
 
@@ -1318,7 +1414,7 @@ function IncomeForm({ onSave, onCancel }) {
 /* ============================== REPORTS ============================== */
 
 function ReportsView({ data }) {
-  const now = new Date();
+  const now = nowMoldova();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
 
