@@ -3,7 +3,8 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Car, Users, Calendar as CalendarIcon, Wallet, BarChart3, Plus, X,
   Trash2, Pencil, Check, AlertTriangle, ChevronLeft, ChevronRight,
-  Phone, Loader2, TrendingUp, TrendingDown, Gauge, Shield, Wrench, Search
+  Phone, Loader2, TrendingUp, TrendingDown, Gauge, Shield, Wrench, Search,
+  RefreshCw
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
@@ -42,6 +43,8 @@ const emptyData = () => ({
   incomes: [],
   insurances: [],
   inspections: [],
+  yandexDrivers: [],   // șoferi sincronizați din Yandex Fleet API
+  yandexEarnings: {},  // key `${date}__${yandexDriverId}` -> {date, yandex_driver_id, total_cash, total_card, total_gross, yandex_commission, park_commission, net_payout}
 });
 
 function fmtMoney(n) {
@@ -222,6 +225,14 @@ export default function TaxiFleetPro() {
     });
   }, [persist]);
 
+  // Ruta /api/yandex/sync scrie deja direct în Supabase (același rând
+  // "fleet_data" ca tot restul aplicației), deci aici doar aliniem starea
+  // locală la ce a scris serverul — fără să mai trimitem încă un POST,
+  // ca să nu riscăm să suprascriem sincronizarea cu date locale vechi.
+  const applySynced = useCallback((next) => {
+    setData(next);
+  }, []);
+
   if (loading || !data) {
     return (
       <Shell tab={tab} setTab={setTab} loading>
@@ -243,6 +254,7 @@ export default function TaxiFleetPro() {
       {tab === "inspection" && <InspectionView data={data} update={update} />}
       {tab === "finance" && <FinanceView data={data} update={update} />}
       {tab === "reports" && <ReportsView data={data} />}
+      {tab === "yandex" && <YandexView data={data} onSynced={applySynced} />}
     </Shell>
   );
 }
@@ -259,6 +271,7 @@ function Shell({ tab, setTab, children, loading, saveError }) {
     { id: "inspection", label: "Revizie tehnică", icon: Wrench },
     { id: "finance", label: "Finanțe", icon: Wallet },
     { id: "reports", label: "Rapoarte", icon: BarChart3 },
+    { id: "yandex", label: "Yandex", icon: RefreshCw },
   ];
 
   return (
@@ -1572,6 +1585,122 @@ function IncomeForm({ onSave, onCancel }) {
         <button className="btn primary" style={{ flex: 1, justifyContent: "center" }} onClick={() => f.descriere && f.suma && onSave({ ...f, suma: Number(f.suma) })}><Check size={15} />Salvează</button>
         <button className="btn" onClick={onCancel}>Anulează</button>
       </div>
+    </div>
+  );
+}
+
+/* ============================== YANDEX ============================== */
+
+function YandexView({ data, onSynced }) {
+  const [date, setDate] = useState(todayISO());
+  const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState(null);
+  const [search, setSearch] = useState("");
+
+  const drivers = data.yandexDrivers || [];
+  const earnings = data.yandexEarnings || {};
+
+  const rows = useMemo(() => drivers.map((d) => {
+    const rec = earnings[`${date}__${d.yandex_driver_id}`] || null;
+    return {
+      ...d,
+      total_cash: rec ? Number(rec.total_cash) : 0,
+      total_card: rec ? Number(rec.total_card) : 0,
+      total_gross: rec ? Number(rec.total_gross) : 0,
+      yandex_commission: rec ? Number(rec.yandex_commission) : 0,
+      park_commission: rec ? Number(rec.park_commission) : 0,
+      net_payout: rec ? Number(rec.net_payout) : 0,
+      has_data: !!rec,
+    };
+  }), [drivers, earnings, date]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((r) => r.full_name?.toLowerCase().includes(q) || r.car_plate?.toLowerCase().includes(q));
+  }, [rows, search]);
+
+  const totals = useMemo(() => ({
+    gross: rows.reduce((s, r) => s + r.total_gross, 0),
+    commission: rows.reduce((s, r) => s + r.yandex_commission + r.park_commission, 0),
+    active: rows.filter((r) => r.has_data && r.total_gross > 0).length,
+  }), [rows]);
+
+  const sync = async () => {
+    setSyncing(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/yandex/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Eroare la sincronizare");
+      onSynced(json.data);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} style={{ maxWidth: 170 }} />
+        <button className="btn primary" onClick={sync} disabled={syncing}>
+          {syncing ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />}
+          Sincronizează cu Yandex
+        </button>
+      </div>
+
+      {error && (
+        <div className="card" style={{ borderColor: "#e5484d55", marginBottom: 14 }}>
+          <div className="save-warn"><AlertTriangle size={14} />{error}</div>
+        </div>
+      )}
+
+      <div className="finance-grid" style={{ display: "grid", gap: 10, marginBottom: 16 }}>
+        <MiniStat label="Total venituri parc" value={fmtMoney(totals.gross)} color="var(--green)" />
+        <MiniStat label="Șoferi activi azi" value={totals.active} color="var(--amber)" />
+        <MiniStat label="Total comision parc" value={fmtMoney(totals.commission)} color="var(--orange)" />
+      </div>
+
+      <div className="field">
+        <input placeholder="Caută după nume sau nr. înmatriculare…" value={search} onChange={(e) => setSearch(e.target.value)} />
+      </div>
+
+      {drivers.length === 0 ? (
+        <div className="card"><EmptyState text='Nu ai încă șoferi sincronizați. Apasă "Sincronizează cu Yandex".' /></div>
+      ) : filtered.length === 0 ? (
+        <div className="card"><EmptyState text="Niciun rezultat pentru căutarea curentă." /></div>
+      ) : (
+        <div className="card" style={{ overflowX: "auto" }}>
+          <table>
+            <thead>
+              <tr>
+                <th>Șofer</th><th>Mașină</th><th>Cash</th><th>Card</th>
+                <th>Brut</th><th>Com. Yandex</th><th>Com. parc</th><th>Net</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((r) => (
+                <tr key={r.yandex_driver_id}>
+                  <td style={{ fontWeight: 600 }}>{r.full_name}</td>
+                  <td>{r.car_plate || <span style={{ color: "var(--muted)" }}>—</span>}</td>
+                  <td className="mono">{fmtMoney(r.total_cash)}</td>
+                  <td className="mono">{fmtMoney(r.total_card)}</td>
+                  <td className="mono" style={{ fontWeight: 700 }}>{fmtMoney(r.total_gross)}</td>
+                  <td className="mono" style={{ color: "var(--orange)" }}>{fmtMoney(r.yandex_commission)}</td>
+                  <td className="mono" style={{ color: "var(--orange)" }}>{fmtMoney(r.park_commission)}</td>
+                  <td className="mono" style={{ color: "var(--green)", fontWeight: 700 }}>{fmtMoney(r.net_payout)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
