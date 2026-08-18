@@ -732,9 +732,33 @@ function WeeklyCalendarView({ data, update }) {
     const k = weekKey(year, month, car.id, weekIdx);
     update((prev) => {
       const existing = prev.weeklyPayments[k];
-      const rec = existing
-        ? { ...existing, mode }
-        : { year, month, carId: car.id, weekIdx, mode, paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
+      let rec;
+      if (existing) {
+        rec = { ...existing, mode };
+        // Dacă trecem de pe "Total" pe "Pe zile" și suma totală introdusă anterior
+        // nu are încă nicio zi detaliată, o punem automat pe prima zi lucrătoare
+        // din săptămână, ca banii introduși deja să nu dispară din vizualizarea pe zile.
+        if (mode === "daily" && existing.mode !== "daily") {
+          const hasDaily = existing.dailyAmounts && Object.keys(existing.dailyAmounts).length > 0;
+          const hasTotal = Number(existing.paidCash || 0) > 0 || Number(existing.paidCard || 0) > 0;
+          if (!hasDaily && hasTotal) {
+            const days = weekDays(year, month, weekIdx, ranges);
+            const firstDay = days[0];
+            if (firstDay != null) {
+              rec.dailyAmounts = {
+                [firstDay]: {
+                  worked: true,
+                  cash: Number(existing.paidCash || 0),
+                  card: Number(existing.paidCard || 0),
+                  note: "Sumă totală introdusă anterior pentru toată săptămâna",
+                },
+              };
+            }
+          }
+        }
+      } else {
+        rec = { year, month, carId: car.id, weekIdx, mode, paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
+      }
       return { ...prev, weeklyPayments: { ...prev.weeklyPayments, [k]: rec } };
     });
   };
@@ -1324,7 +1348,13 @@ function FinanceView({ data, update }) {
         map[k].card += Number(d.card || 0);
       });
     });
-    return Object.entries(map).map(([day, v]) => ({ day: Number(day), ...v })).sort((a, b) => a.day - b.day);
+    const last = daysInMonth(year, month);
+    const out = [];
+    for (let d = 1; d <= last; d++) {
+      if (isSunday(year, month, d)) continue;
+      out.push({ day: d, cash: map[d] ? map[d].cash : 0, card: map[d] ? map[d].card : 0, hasData: !!map[d] });
+    }
+    return out;
   }, [data.weeklyPayments, year, month]);
 
   const extraIncome = data.incomes.filter((i) => i.data.startsWith(mk)).reduce((s, i) => s + Number(i.suma || 0), 0);
@@ -1417,14 +1447,14 @@ function FinanceView({ data, update }) {
           <button className="btn" onClick={() => setShowDayIncome(true)}><Search size={14} />Venit pe zi</button>
         </div>
         <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>
-          Doar zilele introduse pe modul „Pe zile" din Calendar apar aici.
+          Toate zilele lunii; cele fără date introduse pe modul „Pe zile" apar cu 0.
         </div>
         {dailyBreakdown.length === 0 ? <EmptyState text={`Nicio zi introdusă pe modul „Pe zile” luna asta.`} /> : (
           <table>
             <thead><tr><td>Zi</td><td>Numerar</td><td>Card</td><td>Total</td></tr></thead>
             <tbody>
               {dailyBreakdown.map((d) => (
-                <tr key={d.day}>
+                <tr key={d.day} style={!d.hasData ? { opacity: 0.45 } : undefined}>
                   <td>{d.day} {MONTHS_RO_SHORT[month]}</td>
                   <td className="mono">{fmtMoney(d.cash)}</td>
                   <td className="mono">{fmtMoney(d.card)}</td>
