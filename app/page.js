@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Car, Users, Calendar as CalendarIcon, Wallet, BarChart3, Plus, X,
   Trash2, Pencil, Check, AlertTriangle, ChevronLeft, ChevronRight,
-  Phone, Loader2, TrendingUp, TrendingDown, Gauge, Shield, Wrench
+  Phone, Loader2, TrendingUp, TrendingDown, Gauge, Shield, Wrench, Search
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
@@ -82,6 +82,9 @@ function weeklyPaid(data, year, month, carId, weekIdx) {
   const r = weeklyRecord(data, year, month, carId, weekIdx);
   return r ? Number(r.paidAmount || 0) : 0;
 }
+function isCarActive(car) {
+  return !car.status || car.status === "activa";
+}
 function isDayActive(car, year, month, day) {
   if (!car.startDate) return true;
   const s = new Date(car.startDate);
@@ -94,6 +97,7 @@ function isDayElapsed(year, month, day) {
   return new Date(year, month, day) <= today;
 }
 function workingDaysEffective(data, car, year, month, weekIdx, ranges) {
+  if (!isCarActive(car)) return 0;
   const r = ranges[weekIdx];
   const rec = weeklyRecord(data, year, month, car.id, weekIdx);
   let count = 0;
@@ -130,6 +134,7 @@ function hasAnyRecordForMonth(data, year, month, carId) {
 function prevMonth(year, month) { return month === 0 ? { year: year - 1, month: 11 } : { year, month: month - 1 }; }
 
 function carryoverFromPrevMonth(data, car, year, month) {
+  if (!isCarActive(car)) return 0;
   const pm = prevMonth(year, month);
   if (car.startDate) {
     const s = new Date(car.startDate);
@@ -146,6 +151,7 @@ function monthlyPlanWithCarry(data, car, year, month) {
   return monthlyPlanBase(data, car, year, month) + carryoverFromPrevMonth(data, car, year, month);
 }
 function weekPlan(data, car, year, month, weekIdx, ranges) {
+  if (!isCarActive(car)) return 0;
   const base = dailyRate(car, year, month) * workingDaysEffective(data, car, year, month, weekIdx, ranges);
   return weekIdx === 0 ? base + carryoverFromPrevMonth(data, car, year, month) : base;
 }
@@ -756,6 +762,13 @@ function WeeklyCalendarView({ data, update }) {
     }));
   };
 
+  const setCarStatus = (car, status) => {
+    update((prev) => ({
+      ...prev,
+      cars: prev.cars.map((c) => (c.id === car.id ? { ...c, status } : c)),
+    }));
+  };
+
   if (data.cars.length === 0) {
     return <div className="card"><EmptyState text="Adaugă cel puțin o mașină pentru a folosi calendarul." /></div>;
   }
@@ -785,6 +798,7 @@ function WeeklyCalendarView({ data, update }) {
             onSetWeekMode={(weekIdx, mode) => setWeekMode(car, weekIdx, mode)}
             onSetWeekDay={(weekIdx, day, entry) => setWeekDay(car, weekIdx, day, entry)}
             onSetStartDate={(dateStr) => setCarStartDate(car, dateStr)}
+            onSetStatus={(status) => setCarStatus(car, status)}
           />
         ))
       )}
@@ -792,7 +806,7 @@ function WeeklyCalendarView({ data, update }) {
   );
 }
 
-function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expanded, onToggle, onSetWeekTotal, onSetWeekMode, onSetWeekDay, onSetStartDate }) {
+function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expanded, onToggle, onSetWeekTotal, onSetWeekMode, onSetWeekDay, onSetStartDate, onSetStatus }) {
   const carryover = carryoverFromPrevMonth(data, car, year, month);
   const planTotal = monthlyPlanWithCarry(data, car, year, month);
   const paidTotal = monthlyPaid(data, year, month, car.id);
@@ -822,13 +836,29 @@ function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expande
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-          <StatusPill status={rowStatus} restanta={restTotal} />
+          {isCarActive(car) ? <StatusPill status={rowStatus} restanta={restTotal} /> : <CarStatusPill status={car.status} />}
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 10.5, color: "var(--muted)" }}>Plan lună</div>
-            <div className="mono" style={{ fontWeight: 700, fontSize: 13.5 }}>{fmtMoney(planTotal)}</div>
+            <div className="mono" style={{ fontWeight: 700, fontSize: 13.5 }}>{isCarActive(car) ? fmtMoney(planTotal) : "—"}</div>
           </div>
         </div>
       </button>
+
+      <div style={{ padding: "0 16px 10px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <select
+          value={car.status || "activa"}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onSetStatus(e.target.value)}
+          style={{ width: "auto", padding: "5px 8px", fontSize: 12 }}
+        >
+          <option value="activa">Activă</option>
+          <option value="service">În service</option>
+          <option value="vanduta">Vândută</option>
+        </select>
+        {!isCarActive(car) && (
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>restanța nu se calculează cât timp nu e activă</span>
+        )}
+      </div>
 
       <div style={{ padding: "0 16px 10px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {car.startDate ? (
@@ -957,7 +987,7 @@ function DayRow({ year, month, day, rec, onSetDay }) {
   }, [year, month, day]);
 
   const commitAmounts = () => onSetDay(day, { cash, card, worked: true });
-  const commitNote = (val) => onSetDay(day, { note: val, worked: false });
+  const commitNote = (val) => onSetDay(day, { note: val, worked });
   const toggleWorked = (nextWorked) => {
     if (nextWorked) onSetDay(day, { worked: true });
     else onSetDay(day, { worked: false, note });
@@ -973,9 +1003,17 @@ function DayRow({ year, month, day, rec, onSetDay }) {
         </div>
       </div>
       {worked ? (
-        <div style={{ display: "flex", gap: 8, marginTop: 6, marginLeft: 70 }}>
-          <input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commitAmounts} />
-          <input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commitAmounts} />
+        <div style={{ marginTop: 6, marginLeft: 70 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commitAmounts} />
+            <input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commitAmounts} />
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <input
+              type="text" placeholder="Descriere (opțional)"
+              value={note} onChange={(e) => setNote(e.target.value)} onBlur={(e) => commitNote(e.target.value)}
+            />
+          </div>
         </div>
       ) : (
         <div style={{ marginTop: 6, marginLeft: 70 }}>
@@ -1261,6 +1299,7 @@ function FinanceView({ data, update }) {
   const mk = monthKey(year, month);
   const [showExpense, setShowExpense] = useState(false);
   const [showIncome, setShowIncome] = useState(false);
+  const [showDayIncome, setShowDayIncome] = useState(false);
   const [confirm, setConfirm] = useState(null);
 
   const calendarIncome = Object.values(data.weeklyPayments)
@@ -1272,6 +1311,21 @@ function FinanceView({ data, update }) {
     const paid = monthlyPaid(data, year, month, car.id);
     return s + Math.max(plan - paid, 0);
   }, 0);
+
+  const dailyBreakdown = useMemo(() => {
+    const map = {};
+    Object.values(data.weeklyPayments).forEach((rec) => {
+      if (rec.year !== year || rec.month !== month || rec.mode !== "daily" || !rec.dailyAmounts) return;
+      Object.entries(rec.dailyAmounts).forEach(([day, d]) => {
+        if (d.worked === false) return;
+        const k = Number(day);
+        if (!map[k]) map[k] = { cash: 0, card: 0 };
+        map[k].cash += Number(d.cash || 0);
+        map[k].card += Number(d.card || 0);
+      });
+    });
+    return Object.entries(map).map(([day, v]) => ({ day: Number(day), ...v })).sort((a, b) => a.day - b.day);
+  }, [data.weeklyPayments, year, month]);
 
   const extraIncome = data.incomes.filter((i) => i.data.startsWith(mk)).reduce((s, i) => s + Number(i.suma || 0), 0);
   const expensesMonth = data.expenses.filter((e) => e.data.startsWith(mk));
@@ -1335,22 +1389,58 @@ function FinanceView({ data, update }) {
           {expensesMonth.length === 0 ? <EmptyState text="Nicio cheltuială luna asta." /> : (
             <table>
               <tbody>
-                {expensesMonth.map((e) => (
-                  <tr key={e.id}>
-                    <td>{e.descriere}<div style={{ fontSize: 11, color: "var(--muted)" }}>{e.categorie}</div></td>
-                    <td className="mono" style={{ color: "var(--red)" }}>{fmtMoney(e.suma)}</td>
-                    <td style={{ textAlign: "right" }}><button className="btn danger" style={{ padding: 5 }} onClick={() => setConfirm({ message: "Ștergi această cheltuială? Această acțiune nu poate fi anulată.", action: () => delExpense(e.id) })}><Trash2 size={13} /></button></td>
-                  </tr>
-                ))}
+                {expensesMonth.map((e) => {
+                  const drv = data.drivers.find((d) => d.id === e.șoferId);
+                  return (
+                    <tr key={e.id}>
+                      <td>
+                        {e.descriere}
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                          {e.categorie} · {new Date(e.data).toLocaleDateString("ro-RO")}{drv ? ` · ${drv.nume}` : ""}
+                          {(e.cash || e.card) ? ` · Num ${fmtMoney(e.cash || 0)} / Card ${fmtMoney(e.card || 0)}` : ""}
+                        </div>
+                      </td>
+                      <td className="mono" style={{ color: "var(--red)" }}>{fmtMoney(e.suma)}</td>
+                      <td style={{ textAlign: "right" }}><button className="btn danger" style={{ padding: 5 }} onClick={() => setConfirm({ message: "Ștergi această cheltuială? Această acțiune nu poate fi anulată.", action: () => delExpense(e.id) })}><Trash2 size={13} /></button></td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}
         </div>
       </div>
 
+      <div className="card" style={{ marginTop: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+          <div className="disp" style={{ fontWeight: 700 }}>Cash / Card pe zi</div>
+          <button className="btn" onClick={() => setShowDayIncome(true)}><Search size={14} />Venit pe zi</button>
+        </div>
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>
+          Doar zilele introduse pe modul „Pe zile" din Calendar apar aici.
+        </div>
+        {dailyBreakdown.length === 0 ? <EmptyState text={`Nicio zi introdusă pe modul „Pe zile” luna asta.`} /> : (
+          <table>
+            <thead><tr><td>Zi</td><td>Numerar</td><td>Card</td><td>Total</td></tr></thead>
+            <tbody>
+              {dailyBreakdown.map((d) => (
+                <tr key={d.day}>
+                  <td>{d.day} {MONTHS_RO_SHORT[month]}</td>
+                  <td className="mono">{fmtMoney(d.cash)}</td>
+                  <td className="mono">{fmtMoney(d.card)}</td>
+                  <td className="mono" style={{ fontWeight: 700 }}>{fmtMoney(d.cash + d.card)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {showDayIncome && <DayIncomeModal data={data} onClose={() => setShowDayIncome(false)} />}
+
       {showExpense && (
         <Modal onClose={() => setShowExpense(false)} title="Adaugă cheltuială">
-          <ExpenseForm onSave={(e) => { addExpense(e); setShowExpense(false); }} onCancel={() => setShowExpense(false)} />
+          <ExpenseForm drivers={data.drivers} onSave={(e) => { addExpense(e); setShowExpense(false); }} onCancel={() => setShowExpense(false)} />
         </Modal>
       )}
       {showIncome && (
@@ -1365,6 +1455,37 @@ function FinanceView({ data, update }) {
   );
 }
 
+function DayIncomeModal({ data, onClose }) {
+  const [date, setDate] = useState(todayISO());
+  const [y, m, d] = date.split("-").map(Number);
+  let cash = 0, card = 0, found = false;
+  Object.values(data.weeklyPayments).forEach((rec) => {
+    if (rec.year !== y || rec.month !== m - 1 || rec.mode !== "daily" || !rec.dailyAmounts) return;
+    const dayRec = rec.dailyAmounts[d];
+    if (!dayRec || dayRec.worked === false) return;
+    found = true;
+    cash += Number(dayRec.cash || 0);
+    card += Number(dayRec.card || 0);
+  });
+
+  return (
+    <Modal onClose={onClose} title="Venitul pe zi">
+      <div className="field"><label>Alege ziua</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 }}>
+        <MiniStat label="Numerar" value={fmtMoney(cash)} color="var(--green)" />
+        <MiniStat label="Card" value={fmtMoney(card)} color="var(--green)" />
+      </div>
+      <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 10 }}>
+        Total: <b className="mono" style={{ color: "var(--text)" }}>{fmtMoney(cash + card)}</b>
+      </div>
+      {!found && <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 6 }}>Nicio mașină nu are date introduse pe modul „Pe zile" pentru ziua asta.</div>}
+      <div style={{ display: "flex", marginTop: 16 }}>
+        <button className="btn" style={{ flex: 1, justifyContent: "center" }} onClick={onClose}>Închide</button>
+      </div>
+    </Modal>
+  );
+}
+
 function MiniStat({ label, value, color }) {
   return (
     <div className="card">
@@ -1374,21 +1495,35 @@ function MiniStat({ label, value, color }) {
   );
 }
 
-function ExpenseForm({ onSave, onCancel }) {
-  const [f, setF] = useState({ data: todayISO(), descriere: "", suma: "", categorie: "Motorină" });
+function ExpenseForm({ onSave, onCancel, drivers }) {
+  const [f, setF] = useState({ data: todayISO(), descriere: "", categorie: "Motorină", șoferId: "", cash: "", card: "" });
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
+  const suma = Number(f.cash || 0) + Number(f.card || 0);
   return (
     <div>
-      <div className="field"><label>Dată</label><input type="date" value={f.data} onChange={(e) => set("data", e.target.value)} /></div>
+      <div className="field"><label>Ziua</label><input type="date" value={f.data} onChange={(e) => set("data", e.target.value)} /></div>
+      <div className="field"><label>Șofer (opțional)</label>
+        <select value={f.șoferId} onChange={(e) => set("șoferId", e.target.value)}>
+          <option value="">— fără șofer —</option>
+          {drivers.map((d) => <option key={d.id} value={d.id}>{d.nume}</option>)}
+        </select>
+      </div>
       <div className="field"><label>Descriere</label><input value={f.descriere} onChange={(e) => set("descriere", e.target.value)} placeholder="Schimb ulei BMW 520D" /></div>
       <div className="field"><label>Categorie</label>
         <select value={f.categorie} onChange={(e) => set("categorie", e.target.value)}>
           {["Motorină", "Ulei/Service", "Reparații", "Spălătorie", "Asigurare", "Impozite", "Altele"].map((c) => <option key={c}>{c}</option>)}
         </select>
       </div>
-      <div className="field"><label>Sumă (lei)</label><input type="number" value={f.suma} onChange={(e) => set("suma", e.target.value)} /></div>
-      <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
-        <button className="btn primary" style={{ flex: 1, justifyContent: "center" }} onClick={() => f.descriere && f.suma && onSave({ ...f, suma: Number(f.suma) })}><Check size={15} />Salvează</button>
+      <div style={{ display: "flex", gap: 8 }}>
+        <div className="field" style={{ flex: 1 }}><label>Numerar (lei)</label><input type="number" value={f.cash} onChange={(e) => set("cash", e.target.value)} /></div>
+        <div className="field" style={{ flex: 1 }}><label>Card (lei)</label><input type="number" value={f.card} onChange={(e) => set("card", e.target.value)} /></div>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: -6, marginBottom: 10 }}>Total scos din cont: <b className="mono">{fmtMoney(suma)}</b></div>
+      <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+        <button
+          className="btn primary" style={{ flex: 1, justifyContent: "center" }}
+          onClick={() => f.descriere && suma > 0 && onSave({ ...f, cash: Number(f.cash || 0), card: Number(f.card || 0), suma })}
+        ><Check size={15} />Salvează</button>
         <button className="btn" onClick={onCancel}>Anulează</button>
       </div>
     </div>
