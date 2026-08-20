@@ -53,13 +53,14 @@ export async function POST(request) {
     const mergedDrivers = Array.from(byId.values());
 
     // 3) ia încasările zilei selectate din Yandex
-    const { perDriver, debugSample } = await fetchYandexDailyEarnings(date);
+    const { perDriver, debugSample, categoryTotals } = await fetchYandexDailyEarnings(date);
     const updatedEarnings = { ...existingEarnings };
     for (const [yandexDriverId, sums] of perDriver.entries()) {
       const totalGross = round2(sums.cash + sums.card);
       const yandexCommission = round2(sums.yandexCommission);
       const parkCommission = computeParkCommission(totalGross);
       const netPayout = round2(totalGross - yandexCommission - parkCommission);
+      const otherPartnerPayments = round2(sums.otherPartnerPayments);
 
       updatedEarnings[`${date}__${yandexDriverId}`] = {
         date,
@@ -70,6 +71,7 @@ export async function POST(request) {
         yandex_commission: yandexCommission,
         park_commission: parkCommission,
         net_payout: netPayout,
+        other_partner_payments: otherPartnerPayments,
       };
     }
 
@@ -85,6 +87,9 @@ export async function POST(request) {
       syncedDrivers: freshDrivers.length,
       syncedEarnings: perDriver.size,
       debugSample,
+      // TEMPORAR — șterge acest câmp după ce confirmi că "other_partner_payments"
+      // se potrivește cu coloana "Прочие платежи партнера, MDL" din Dispecerat.
+      categoryTotalsDebug: categoryTotals,
     });
   } catch (e) {
     return Response.json({ error: e.message }, { status: 500 });
