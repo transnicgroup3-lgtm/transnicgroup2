@@ -1610,6 +1610,7 @@ function YandexView({ data, onSynced }) {
       yandex_commission: rec ? Number(rec.yandex_commission) : 0,
       park_commission: rec ? Number(rec.park_commission) : 0,
       net_payout: rec ? Number(rec.net_payout) : 0,
+      other_partner_payments: rec ? Number(rec.other_partner_payments) : 0,
       has_data: !!rec,
     };
   }), [drivers, earnings, date]);
@@ -1680,21 +1681,15 @@ function YandexView({ data, onSynced }) {
           <table>
             <thead>
               <tr>
-                <th>Șofer</th><th>Mașină</th><th>Cash</th><th>Card</th>
-                <th>Brut</th><th>Com. Yandex</th><th>Com. parc</th><th>Net</th>
+                <th>Șofer</th><th>Mașină</th><th>Alte plăți ale partenerului, MDL</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((r) => (
                 <tr key={r.yandex_driver_id}>
                   <td style={{ fontWeight: 600 }}>{r.full_name}</td>
-                  <td>{r.car_plate || <span style={{ color: "var(--muted)" }}>—</span>}</td>
-                  <td className="mono">{fmtMoney(r.total_cash)}</td>
-                  <td className="mono">{fmtMoney(r.total_card)}</td>
-                  <td className="mono" style={{ fontWeight: 700 }}>{fmtMoney(r.total_gross)}</td>
-                  <td className="mono" style={{ color: "var(--orange)" }}>{fmtMoney(r.yandex_commission)}</td>
-                  <td className="mono" style={{ color: "var(--orange)" }}>{fmtMoney(r.park_commission)}</td>
-                  <td className="mono" style={{ color: "var(--green)", fontWeight: 700 }}>{fmtMoney(r.net_payout)}</td>
+                  <td>{r.car_model || <span style={{ color: "var(--muted)" }}>—</span>}</td>
+                  <td className="mono" style={{ fontWeight: 700 }}>{fmtMoney(r.other_partner_payments)}</td>
                 </tr>
               ))}
             </tbody>
