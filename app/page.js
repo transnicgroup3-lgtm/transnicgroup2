@@ -1681,14 +1681,14 @@ function YandexView({ data, onSynced }) {
           <table>
             <thead>
               <tr>
-                <th>Șofer</th><th>Mașină</th><th>Alte plăți ale partenerului, MDL</th>
+                <th>Șofer</th><th>Nr. înmatriculare</th><th>Alte plăți ale partenerului, MDL</th>
               </tr>
             </thead>
             <tbody>
               {filtered.map((r) => (
                 <tr key={r.yandex_driver_id}>
                   <td style={{ fontWeight: 600 }}>{r.full_name}</td>
-                  <td>{r.car_model || <span style={{ color: "var(--muted)" }}>—</span>}</td>
+                  <td>{r.car_plate || <span style={{ color: "var(--muted)" }}>—</span>}</td>
                   <td className="mono" style={{ fontWeight: 700 }}>{fmtMoney(r.other_partner_payments)}</td>
                 </tr>
               ))}
