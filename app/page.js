@@ -389,11 +389,36 @@ function Dashboard({ data, setTab }) {
   const insuranceAlerts = data.insurances.filter((ins) => { const d = daysUntil(ins.dataExpirare); return d != null && d <= 30; });
   const inspectionAlerts = data.inspections.filter((insp) => { const d = daysUntil(insp.dataExpirare); return d != null && d <= 30; });
 
+  // Ultimele 7 zile (rulant, până azi inclusiv) — pentru totalurile reale Yandex de pe Dashboard.
+  const last7Dates = (() => {
+    const t = todayISO();
+    const [ty, tm, td] = t.split("-").map(Number);
+    const out = [];
+    for (let i = 0; i < 7; i++) {
+      const dt = new Date(Date.UTC(ty, tm - 1, td - i));
+      out.push(`${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`);
+    }
+    return out;
+  })();
+  const yandexWeekRecords = Object.values(data.yandexEarnings || {}).filter((r) => last7Dates.includes(r.date));
+  const yandexGrossWeek = yandexWeekRecords.reduce((s, r) => s + Number(r.total_gross || 0), 0);
+  const yandexCommissionWeek = yandexWeekRecords.reduce((s, r) => s + Number(r.yandex_commission || 0) + Number(r.park_commission || 0), 0);
+  const yandexDaysSynced = new Set(yandexWeekRecords.map((r) => r.date)).size;
+
+  const todayYandexRows = (data.yandexDrivers || [])
+    .map((d) => {
+      const rec = (data.yandexEarnings || {})[`${todayISO()}__${d.yandex_driver_id}`];
+      return { name: d.full_name, car: d.car_plate, gross: rec ? Number(rec.total_gross) : 0, net: rec ? Number(rec.net_payout) : 0 };
+    })
+    .filter((r) => r.gross > 0)
+    .sort((a, b) => b.net - a.net)
+    .slice(0, 5);
+
   const stats = [
     { label: "Mașini", value: data.cars.length, icon: Car, sub: `${activeCars} active · ${inService} service` },
     { label: "Șoferi", value: data.drivers.length, icon: Users, sub: `${data.drivers.filter((d) => d.activ).length} activi` },
-    { label: "Încasări săpt.", value: fmtMoney(incomeWeek), icon: Wallet, sub: `${weekRows.filter((r) => r.status === "paid").length}/${data.cars.length} la zi`, mono: true },
-    { label: "Profit săpt.", value: fmtMoney(profitWeek), icon: profitWeek >= 0 ? TrendingUp : TrendingDown, sub: `cheltuieli ${fmtMoney(expensesWeek)}`, mono: true, accent: profitWeek >= 0 },
+    { label: "Venituri Yandex (7 zile)", value: fmtMoney(yandexGrossWeek), icon: Wallet, sub: `${yandexDaysSynced}/7 zile sincronizate`, mono: true },
+    { label: "Comision total (7 zile)", value: fmtMoney(yandexCommissionWeek), icon: TrendingUp, sub: "Yandex + parc", mono: true, accent: true },
   ];
 
   return (
@@ -436,13 +461,13 @@ function Dashboard({ data, setTab }) {
       <div className="card">
         <div style={{ fontWeight: 700, marginBottom: 4 }} className="disp">Săptămâna aceasta, pe mașini</div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>{range.start}–{range.end} {MONTHS_RO[month]}</div>
-        {data.cars.length === 0 ? (
-          <EmptyState text="Adaugă prima mașină din secțiunea Mașini." />
+        {weekRows.filter((r) => r.due > 0).length === 0 ? (
+          <EmptyState text="Niciun tarif zilnic setat încă la mașinile tale — adaugă tarife în secțiunea Mașini ca să apară aici planul săptămânal de chirie." />
         ) : (
           <table>
             <thead><tr><th>Mașină</th><th>Șofer</th><th>Plan săpt.</th><th>Adus</th><th>Stare</th></tr></thead>
             <tbody>
-              {weekRows.map(({ car, status, due, paid }) => {
+              {weekRows.filter((r) => r.due > 0).map(({ car, status, due, paid }) => {
                 const driver = data.drivers.find((d) => d.id === car.driverId);
                 return (
                   <tr key={car.id}>
@@ -454,6 +479,33 @@ function Dashboard({ data, setTab }) {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div>
+            <div style={{ fontWeight: 700 }} className="disp">Yandex astăzi, pe șoferi</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>Top 5 după câștig net · {todayISO()}</div>
+          </div>
+          <button className="btn" onClick={() => setTab("yandex")}>Deschide Yandex</button>
+        </div>
+        {todayYandexRows.length === 0 ? (
+          <EmptyState text='Nicio dată sincronizată încă pentru azi. Deschide fila Yandex și apasă "Sincronizează cu Yandex".' />
+        ) : (
+          <table>
+            <thead><tr><th>Șofer</th><th>Mașină</th><th>Brut</th><th>Net</th></tr></thead>
+            <tbody>
+              {todayYandexRows.map((r) => (
+                <tr key={r.name + r.car}>
+                  <td style={{ fontWeight: 600 }}>{r.name}</td>
+                  <td>{r.car || <span style={{ color: "var(--muted)" }}>—</span>}</td>
+                  <td className="mono">{fmtMoney(r.gross)}</td>
+                  <td className="mono" style={{ color: "var(--green)", fontWeight: 700 }}>{fmtMoney(r.net)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}
