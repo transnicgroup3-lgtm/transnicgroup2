@@ -389,10 +389,18 @@ function Dashboard({ data, setTab }) {
   const insuranceAlerts = data.insurances.filter((ins) => { const d = daysUntil(ins.dataExpirare); return d != null && d <= 30; });
   const inspectionAlerts = data.inspections.filter((insp) => { const d = daysUntil(insp.dataExpirare); return d != null && d <= 30; });
 
-  // Câștigurile de azi din Yandex (cash/card aduse azi).
-  const todayYandexRecords = Object.values(data.yandexEarnings || {}).filter((r) => r.date === todayISO());
-  const cashToday = todayYandexRecords.reduce((s, r) => s + Number(r.total_cash || 0), 0);
-  const cardToday = todayYandexRecords.reduce((s, r) => s + Number(r.total_card || 0), 0);
+  // Cash/card ADUSE AZI — introduse manual de tine în Calendar (modul "Pe zile"), NU din Yandex.
+  const cashCardToday = (() => {
+    let cash = 0, card = 0;
+    Object.values(data.weeklyPayments || {}).forEach((rec) => {
+      if (rec.year !== year || rec.month !== month || rec.mode !== "daily" || !rec.dailyAmounts) return;
+      const d = rec.dailyAmounts[day];
+      if (!d || d.worked === false) return;
+      cash += Number(d.cash || 0);
+      card += Number(d.card || 0);
+    });
+    return { cash, card };
+  })();
 
   const todayYandexRows = (data.yandexDrivers || [])
     .map((d) => {
@@ -406,8 +414,8 @@ function Dashboard({ data, setTab }) {
   const stats = [
     { label: "Mașini", value: data.cars.length, icon: Car, sub: `${activeCars} active · ${inService} service` },
     { label: "Șoferi", value: data.drivers.length, icon: Users, sub: `${data.drivers.filter((d) => d.activ).length} activi` },
-    { label: "Cash adus azi", value: fmtMoney(cashToday), icon: Wallet, sub: todayISO(), mono: true },
-    { label: "Card adus azi", value: fmtMoney(cardToday), icon: TrendingUp, sub: todayISO(), mono: true, accent: true },
+    { label: "Cash adus azi", value: fmtMoney(cashCardToday.cash), icon: Wallet, sub: todayISO(), mono: true },
+    { label: "Card adus azi", value: fmtMoney(cashCardToday.card), icon: TrendingUp, sub: todayISO(), mono: true, accent: true },
   ];
 
   return (
