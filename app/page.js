@@ -389,21 +389,10 @@ function Dashboard({ data, setTab }) {
   const insuranceAlerts = data.insurances.filter((ins) => { const d = daysUntil(ins.dataExpirare); return d != null && d <= 30; });
   const inspectionAlerts = data.inspections.filter((insp) => { const d = daysUntil(insp.dataExpirare); return d != null && d <= 30; });
 
-  // Ultimele 7 zile (rulant, până azi inclusiv) — pentru totalurile reale Yandex de pe Dashboard.
-  const last7Dates = (() => {
-    const t = todayISO();
-    const [ty, tm, td] = t.split("-").map(Number);
-    const out = [];
-    for (let i = 0; i < 7; i++) {
-      const dt = new Date(Date.UTC(ty, tm - 1, td - i));
-      out.push(`${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`);
-    }
-    return out;
-  })();
-  const yandexWeekRecords = Object.values(data.yandexEarnings || {}).filter((r) => last7Dates.includes(r.date));
-  const yandexGrossWeek = yandexWeekRecords.reduce((s, r) => s + Number(r.total_gross || 0), 0);
-  const yandexCommissionWeek = yandexWeekRecords.reduce((s, r) => s + Number(r.yandex_commission || 0) + Number(r.park_commission || 0), 0);
-  const yandexDaysSynced = new Set(yandexWeekRecords.map((r) => r.date)).size;
+  // Câștigurile de azi din Yandex (cash/card aduse azi).
+  const todayYandexRecords = Object.values(data.yandexEarnings || {}).filter((r) => r.date === todayISO());
+  const cashToday = todayYandexRecords.reduce((s, r) => s + Number(r.total_cash || 0), 0);
+  const cardToday = todayYandexRecords.reduce((s, r) => s + Number(r.total_card || 0), 0);
 
   const todayYandexRows = (data.yandexDrivers || [])
     .map((d) => {
@@ -417,8 +406,8 @@ function Dashboard({ data, setTab }) {
   const stats = [
     { label: "Mașini", value: data.cars.length, icon: Car, sub: `${activeCars} active · ${inService} service` },
     { label: "Șoferi", value: data.drivers.length, icon: Users, sub: `${data.drivers.filter((d) => d.activ).length} activi` },
-    { label: "Venituri Yandex (7 zile)", value: fmtMoney(yandexGrossWeek), icon: Wallet, sub: `${yandexDaysSynced}/7 zile sincronizate`, mono: true },
-    { label: "Comision total (7 zile)", value: fmtMoney(yandexCommissionWeek), icon: TrendingUp, sub: "Yandex + parc", mono: true, accent: true },
+    { label: "Cash adus azi", value: fmtMoney(cashToday), icon: Wallet, sub: todayISO(), mono: true },
+    { label: "Card adus azi", value: fmtMoney(cardToday), icon: TrendingUp, sub: todayISO(), mono: true, accent: true },
   ];
 
   return (
