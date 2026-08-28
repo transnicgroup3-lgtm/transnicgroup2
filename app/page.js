@@ -1757,7 +1757,7 @@ function ReportsView({ data }) {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
 
-  const perCar = useMemo(() => data.cars.map((car) => {
+    const perCar = useMemo(() => data.cars.filter((car) => car.driverId).map((car) => {
     const plan = monthlyPlanWithCarry(data, car, year, month);
     const paid = monthlyPaid(data, year, month, car.id);
     const carryover = carryoverFromPrevMonth(data, car, year, month);
@@ -1780,9 +1780,9 @@ function ReportsView({ data }) {
         <button className="btn" style={{ padding: 8 }} onClick={() => changeMonth(1)}><ChevronRight size={16} /></button>
       </div>
 
-      {data.cars.length === 0 ? (
-        <div className="card"><EmptyState text="Adaugă mașini pentru a vedea rapoarte." /></div>
-      ) : (
+        {perCar.length === 0 ? (
+        <div className="card"><EmptyState text="Nicio mașină cu șofer alocat momentan." /></div>
+          ) : (
         <div className="card" style={{ overflowX: "auto" }}>
           <table>
             <thead><tr><th>Mașină</th><th>Șofer</th><th>Plan lună</th><th>Adus</th><th>Rest</th></tr></thead>
