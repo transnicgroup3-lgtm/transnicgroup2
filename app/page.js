@@ -1392,11 +1392,12 @@ function FinanceView({ data, update }) {
     .filter((p) => p.year === year && p.month === month)
     .reduce((s, p) => s + Number(p.paidAmount || 0), 0);
 
-  const restante = data.cars.reduce((s, car) => {
-    const plan = monthlyPlanWithCarry(data, car, year, month);
-    const paid = monthlyPaid(data, year, month, car.id);
-    return s + Math.max(plan - paid, 0);
-  }, 0);
+const restante = data.cars.reduce((s, car) => {
+  if (!car.driverId) return s; // doar mașini cu șofer alocat momentan
+  const plan = monthlyPlanBase(data, car, year, month); // fără moștenire din lunile trecute — pornește curat, de azi
+  const paid = monthlyPaid(data, year, month, car.id);
+  return s + Math.max(plan - paid, 0);
+}, 0);
 
   const dailyBreakdown = useMemo(() => {
     const map = {};
