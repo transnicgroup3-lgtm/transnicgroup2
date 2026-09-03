@@ -760,6 +760,7 @@ function WeeklyCalendarView({ data, update }) {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [search, setSearch] = useState("");
+  const [onlyWithDriver, setOnlyWithDriver] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const ranges = weekRanges(year, month);
   const todayIdx = (year === now.getFullYear() && month === now.getMonth()) ? currentWeekIndex(year, month, now.getDate(), ranges) : -1;
@@ -768,8 +769,9 @@ function WeeklyCalendarView({ data, update }) {
     const term = search.trim().toLowerCase();
     return [...data.cars]
       .filter((c) => !term || c.nr.toLowerCase().includes(term) || `${c.marca} ${c.model}`.toLowerCase().includes(term))
+      .filter((c) => !onlyWithDriver || c.driverId)
       .sort((a, b) => a.nr.localeCompare(b.nr, "ro", { sensitivity: "base", numeric: true }));
-  }, [data.cars, search]);
+  }, [data.cars, search, onlyWithDriver]);
 
   const changeMonth = (delta) => {
     let m = month + delta, y = year;
@@ -867,9 +869,18 @@ function WeeklyCalendarView({ data, update }) {
         <button className="btn" style={{ padding: 8 }} onClick={() => changeMonth(1)}><ChevronRight size={16} /></button>
       </div>
 
-      <div className="field" style={{ marginBottom: 14 }}>
+<div className="field" style={{ marginBottom: 14 }}>
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Caută mașină după număr, marcă sau model…" />
       </div>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, fontSize: 13.5, color: "var(--muted)", cursor: "pointer" }}>
+        <input
+          type="checkbox"
+          checked={onlyWithDriver}
+          onChange={(e) => setOnlyWithDriver(e.target.checked)}
+        />
+        Arată doar mașinile cu șofer alocat
+      </label>
 
       {filteredCars.length === 0 ? (
         <div className="card"><EmptyState text="Nicio mașină găsită pentru căutarea asta." /></div>
