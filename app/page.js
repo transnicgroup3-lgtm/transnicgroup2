@@ -55,9 +55,24 @@ function daysInMonth(year, month) { return new Date(year, month + 1, 0).getDate(
 function monthKey(y, m) { return `${y}-${String(m + 1).padStart(2, "0")}`; }
 function isSunday(year, month, day) { return new Date(year, month, day).getDay() === 0; }
 
-function workingDaysInRange(year, month, startDay, endDay) {
+// Câte zile pe săptămână lucrează șoferul mașinii (5, 6 sau 7).
+// Implicit 6 = păstrează comportamentul vechi (toate zilele, în afară de duminică).
+const CAR_WORKDAYS_OPTIONS = [5, 6, 7];
+function carWorkDays(car) {
+  const wd = Number(car.workDays);
+  return CAR_WORKDAYS_OPTIONS.includes(wd) ? wd : 6;
+}
+function isCarWorkDay(car, year, month, day) {
+  const dow = new Date(year, month, day).getDay(); // 0=Duminică ... 6=Sâmbătă
+  const wd = carWorkDays(car);
+  if (wd >= 7) return true;
+  if (wd === 5) return dow !== 0 && dow !== 6; // liber sâmbăta și duminica
+  return dow !== 0; // 6 zile/săpt (implicit) — liber doar duminica
+}
+
+function workingDaysInRange(car, year, month, startDay, endDay) {
   let count = 0;
-  for (let d = startDay; d <= endDay; d++) if (!isSunday(year, month, d)) count++;
+  for (let d = startDay; d <= endDay; d++) if (isCarWorkDay(car, year, month, d)) count++;
   return count;
 }
 function weekRanges(year, month) {
@@ -66,11 +81,11 @@ function weekRanges(year, month) {
     .filter(([s]) => s <= last)
     .map(([s, e]) => ({ start: s, end: Math.min(e, last) }));
 }
-function workingDaysInMonth(year, month) { return workingDaysInRange(year, month, 1, daysInMonth(year, month)); }
+function workingDaysInMonth(car, year, month) { return workingDaysInRange(car, year, month, 1, daysInMonth(year, month)); }
 
 function dailyRate(car, year, month) {
   if (car.tarifPeriod === "luna") {
-    const wd = workingDaysInMonth(year, month);
+    const wd = workingDaysInMonth(car, year, month);
     return wd > 0 ? (Number(car.tarif) || 0) / wd : 0;
   }
   return Number(car.tarif) || 0;
@@ -105,7 +120,7 @@ function workingDaysEffective(data, car, year, month, weekIdx, ranges) {
   const rec = weeklyRecord(data, year, month, car.id, weekIdx);
   let count = 0;
   for (let d = r.start; d <= r.end; d++) {
-    if (isSunday(year, month, d)) continue;
+    if (!isCarWorkDay(car, year, month, d)) continue;
     if (!isDayActive(car, year, month, d)) continue;
     if (!isDayElapsed(year, month, d)) continue;
     if (rec && rec.mode === "daily" && rec.dailyAmounts) {
@@ -160,10 +175,10 @@ function weekPlan(data, car, year, month, weekIdx, ranges) {
 }
 
 const DAY_NAMES_RO = ["Duminică", "Luni", "Marți", "Miercuri", "Joi", "Vineri", "Sâmbătă"];
-function weekDays(year, month, weekIdx, ranges) {
+function weekDays(car, year, month, weekIdx, ranges) {
   const r = ranges[weekIdx];
   const days = [];
-  for (let d = r.start; d <= r.end; d++) if (!isSunday(year, month, d)) days.push(d);
+  for (let d = r.start; d <= r.end; d++) if (isCarWorkDay(car, year, month, d)) days.push(d);
   return days;
 }
 function dayLabel(year, month, day) {
@@ -549,7 +564,7 @@ function ConfirmModal({ message, onConfirm, onCancel }) {
 function CarsView({ data, update }) {
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
-  const empty = { nr: "", marca: "", model: "", an: "", tarif: 157, tarifPeriod: "zi", driverId: "", status: "activa" };
+  const empty = { nr: "", marca: "", model: "", an: "", tarif: 157, tarifPeriod: "zi", workDays: 6, driverId: "", status: "activa" };
   const sortedCars = useMemo(
     () => [...data.cars].sort((a, b) => a.nr.localeCompare(b.nr, "ro", { sensitivity: "base", numeric: true })),
     [data.cars]
@@ -576,7 +591,7 @@ function CarsView({ data, update }) {
       ) : (
         <div className="card" style={{ overflowX: "auto" }}>
           <table>
-            <thead><tr><th>Nr.</th><th>Marcă / Model</th><th>An</th><th>Tarif</th><th>Șofer</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Nr.</th><th>Marcă / Model</th><th>An</th><th>Tarif</th><th>Zile/săpt</th><th>Șofer</th><th>Status</th><th></th></tr></thead>
             <tbody>
               {sortedCars.map((c) => {
                 const driver = data.drivers.find((d) => d.id === c.driverId);
@@ -586,6 +601,7 @@ function CarsView({ data, update }) {
                     <td>{c.marca} {c.model}</td>
                     <td className="mono">{c.an || <span style={{ color: "var(--muted)" }}>—</span>}</td>
                     <td className="mono">{fmtRate(c)}</td>
+                    <td className="mono">{carWorkDays(c)}</td>
                     <td>{driver ? driver.nume : <span style={{ color: "var(--muted)" }}>nealocat</span>}</td>
                     <td><CarStatusPill status={c.status} /></td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
@@ -641,6 +657,17 @@ function CarForm({ car, drivers, onSave, onCancel }) {
             <option value="zi">lei / zi</option>
             <option value="luna">lei / lună</option>
           </select>
+        </div>
+      </div>
+      <div className="field">
+        <label>Zile lucrate pe săptămână</label>
+        <select value={f.workDays || 6} onChange={(e) => set("workDays", Number(e.target.value))}>
+          <option value={7}>7 zile (fără zi liberă)</option>
+          <option value={6}>6 zile (liber duminica)</option>
+          <option value={5}>5 zile (liber sâmbătă și duminică)</option>
+        </select>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 4 }}>
+          Determină câte zile intră în planul săptămânal/lunar al mașinii.
         </div>
       </div>
       <div className="field">
@@ -806,7 +833,7 @@ function WeeklyCalendarView({ data, update }) {
           const hasDaily = existing.dailyAmounts && Object.keys(existing.dailyAmounts).length > 0;
           const hasTotal = Number(existing.paidCash || 0) > 0 || Number(existing.paidCard || 0) > 0;
           if (!hasDaily && hasTotal) {
-            const days = weekDays(year, month, weekIdx, ranges);
+            const days = weekDays(car, year, month, weekIdx, ranges);
             const firstDay = days[0];
             if (firstDay != null) {
               rec.dailyAmounts = {
@@ -1034,7 +1061,7 @@ function WeekRow({ car, data, year, month, weekIdx, range, ranges, isCurrent, on
   const rest = Math.max(plan - (paid || 0), 0);
 
   const commitTotal = () => onSetTotal(cash, card);
-  const days = weekDays(year, month, weekIdx, ranges);
+  const days = weekDays(car, year, month, weekIdx, ranges);
 
   return (
     <div className="weekrow" style={{ display: "block" }}>
@@ -1439,6 +1466,11 @@ const restante = data.cars.reduce((s, car) => {
     return out;
   }, [data.weeklyPayments, year, month]);
 
+  const dailyTotals = useMemo(
+    () => dailyBreakdown.reduce((acc, d) => ({ cash: acc.cash + d.cash, card: acc.card + d.card }), { cash: 0, card: 0 }),
+    [dailyBreakdown]
+  );
+
   const extraIncome = data.incomes.filter((i) => i.data.startsWith(mk)).reduce((s, i) => s + Number(i.suma || 0), 0);
   const expensesMonth = data.expenses.filter((e) => e.data.startsWith(mk));
   const totalExpenses = expensesMonth.reduce((s, e) => s + Number(e.suma || 0), 0);
@@ -1544,6 +1576,14 @@ const restante = data.cars.reduce((s, car) => {
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr style={{ borderTop: "1px solid var(--border, #2a303b)" }}>
+                <td style={{ fontWeight: 700 }}>Total {MONTHS_RO[month]}</td>
+                <td className="mono" style={{ fontWeight: 700, color: "var(--green)" }}>{fmtMoney(dailyTotals.cash)}</td>
+                <td className="mono" style={{ fontWeight: 700, color: "var(--green)" }}>{fmtMoney(dailyTotals.card)}</td>
+                <td className="mono" style={{ fontWeight: 700 }}>{fmtMoney(dailyTotals.cash + dailyTotals.card)}</td>
+              </tr>
+            </tfoot>
           </table>
         )}
       </div>
