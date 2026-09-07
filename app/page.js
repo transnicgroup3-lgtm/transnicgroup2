@@ -1480,7 +1480,6 @@ const restante = data.cars.reduce((s, car) => {
     const last = daysInMonth(year, month);
     const out = [];
     for (let d = 1; d <= last; d++) {
-      if (isSunday(year, month, d)) continue;
       out.push({ day: d, cash: map[d] ? map[d].cash : 0, card: map[d] ? map[d].card : 0, hasData: !!map[d] });
     }
     return out;
