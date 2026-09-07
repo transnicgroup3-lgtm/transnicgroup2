@@ -1947,13 +1947,14 @@ function ReportsView({ data }) {
 
   const perCar = useMemo(() => {
     const rows = data.cars.filter((car) => car.driverId).map((car) => {
+      const planBase = monthlyPlanBase(data, car, year, month);
       const plan = monthlyPlanWithCarry(data, car, year, month);
       const paid = monthlyPaid(data, year, month, car.id);
       const carryover = carryoverFromPrevMonth(data, car, year, month);
       const driver = data.drivers.find((d) => d.id === car.driverId);
       const rest = Math.max(plan - paid, 0);
       const status = statusOf(plan, paid);
-      return { car, driver, plan, paid, rest, carryover, status };
+      return { car, driver, planBase, plan, paid, rest, carryover, status };
     });
     // Restanțele mai mari primele, ca să vezi imediat ce trebuie urmărit.
     return rows.sort((a, b) => b.rest - a.rest || b.paid - a.paid);
@@ -1988,7 +1989,7 @@ function ReportsView({ data }) {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px,1fr))", gap: 12, marginBottom: 18 }}>
-        <MiniStat label="Plan total lună" value={fmtMoney(totals.plan)} color="var(--amber)" />
+        <MiniStat label="Total de recuperat" value={fmtMoney(totals.plan)} color="var(--amber)" />
         <MiniStat label="Adus total" value={fmtMoney(totals.paid)} color="var(--green)" />
         <MiniStat label="Restanțe total" value={fmtMoney(totals.rest)} color={totals.rest > 0 ? "var(--orange)" : "var(--muted)"} />
       </div>
@@ -2019,13 +2020,20 @@ function ReportsView({ data }) {
           ) : (
             <div className="card" style={{ overflowX: "auto" }}>
               <table>
-                <thead><tr><th>Mașină</th><th>Șofer</th><th>Plan lună</th><th>Adus</th><th>Rest</th><th>Stare</th></tr></thead>
+                <thead><tr><th>Mașină</th><th>Șofer</th><th>Total de recuperat</th><th>Adus</th><th>Rest</th><th>Stare</th></tr></thead>
                 <tbody>
-                  {filteredCars.map(({ car, driver, plan, paid, rest, carryover, status }) => (
+                  {filteredCars.map(({ car, driver, planBase, plan, paid, rest, carryover, status }) => (
                     <tr key={car.id}>
                       <td style={{ fontWeight: 600 }}>{car.nr}</td>
                       <td>{driver ? driver.nume : <span style={{ color: "var(--muted)" }}>—</span>}</td>
-                      <td className="mono">{fmtMoney(plan)}{carryover > 0 ? <div style={{ fontSize: 10.5, color: "var(--orange)" }}>+{fmtMoney(carryover)} restanță anterioară</div> : null}</td>
+                      <td className="mono">
+                        {fmtMoney(plan)}
+                        {carryover > 0 ? (
+                          <div style={{ fontSize: 10.5, color: "var(--muted)", fontWeight: 400 }}>
+                            din care: {fmtMoney(planBase)} plan lună + <span style={{ color: "var(--orange)" }}>{fmtMoney(carryover)} restanță veche</span>
+                          </div>
+                        ) : null}
+                      </td>
                       <td className="mono" style={{ color: "var(--green)" }}>{fmtMoney(paid)}</td>
                       <td className="mono" style={{ color: rest > 0 ? "var(--orange)" : "var(--muted)", fontWeight: rest > 0 ? 700 : 400 }}>{fmtMoney(rest)}</td>
                       <td><StatusPill status={status} restanta={rest} /></td>
