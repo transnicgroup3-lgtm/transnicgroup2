@@ -1943,14 +1943,34 @@ function ReportsView({ data }) {
   const now = nowMoldova();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
+  const [filter, setFilter] = useState("toate");
 
-    const perCar = useMemo(() => data.cars.filter((car) => car.driverId).map((car) => {
-    const plan = monthlyPlanWithCarry(data, car, year, month);
-    const paid = monthlyPaid(data, year, month, car.id);
-    const carryover = carryoverFromPrevMonth(data, car, year, month);
-    const driver = data.drivers.find((d) => d.id === car.driverId);
-    return { car, driver, plan, paid, rest: Math.max(plan - paid, 0), carryover };
-  }).sort((a, b) => b.paid - a.paid), [data, year, month]);
+  const perCar = useMemo(() => {
+    const rows = data.cars.filter((car) => car.driverId).map((car) => {
+      const plan = monthlyPlanWithCarry(data, car, year, month);
+      const paid = monthlyPaid(data, year, month, car.id);
+      const carryover = carryoverFromPrevMonth(data, car, year, month);
+      const driver = data.drivers.find((d) => d.id === car.driverId);
+      const rest = Math.max(plan - paid, 0);
+      const status = statusOf(plan, paid);
+      return { car, driver, plan, paid, rest, carryover, status };
+    });
+    // Restanțele mai mari primele, ca să vezi imediat ce trebuie urmărit.
+    return rows.sort((a, b) => b.rest - a.rest || b.paid - a.paid);
+  }, [data, year, month]);
+
+  const filteredCars = useMemo(() => {
+    if (filter === "restanta") return perCar.filter((r) => r.rest > 0);
+    if (filter === "la_zi") return perCar.filter((r) => r.rest <= 0);
+    return perCar;
+  }, [perCar, filter]);
+
+  const totals = perCar.reduce((acc, r) => ({
+    plan: acc.plan + r.plan,
+    paid: acc.paid + r.paid,
+    rest: acc.rest + r.rest,
+  }), { plan: 0, paid: 0, rest: 0 });
+  const restanteCount = perCar.filter((r) => r.rest > 0).length;
 
   const changeMonth = (delta) => {
     let m = month + delta, y = year;
@@ -1961,31 +1981,70 @@ function ReportsView({ data }) {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
         <button className="btn" style={{ padding: 8 }} onClick={() => changeMonth(-1)}><ChevronLeft size={16} /></button>
         <div className="disp" style={{ fontSize: 18, fontWeight: 700, minWidth: 170, textAlign: "center" }}>{MONTHS_RO[month]} {year}</div>
         <button className="btn" style={{ padding: 8 }} onClick={() => changeMonth(1)}><ChevronRight size={16} /></button>
       </div>
 
-        {perCar.length === 0 ? (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px,1fr))", gap: 12, marginBottom: 18 }}>
+        <MiniStat label="Plan total lună" value={fmtMoney(totals.plan)} color="var(--amber)" />
+        <MiniStat label="Adus total" value={fmtMoney(totals.paid)} color="var(--green)" />
+        <MiniStat label="Restanțe total" value={fmtMoney(totals.rest)} color={totals.rest > 0 ? "var(--orange)" : "var(--muted)"} />
+      </div>
+
+      {perCar.length === 0 ? (
         <div className="card"><EmptyState text="Nicio mașină cu șofer alocat momentan." /></div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+            {[
+              { id: "toate", label: `Toate (${perCar.length})` },
+              { id: "restanta", label: `Cu restanță (${restanteCount})` },
+              { id: "la_zi", label: `La zi (${perCar.length - restanteCount})` },
+            ].map((f) => (
+              <button
+                key={f.id}
+                className={"btn" + (filter === f.id ? " primary" : "")}
+                style={{ padding: "7px 12px", fontSize: 12.5 }}
+                onClick={() => setFilter(f.id)}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+
+          {filteredCars.length === 0 ? (
+            <div className="card"><EmptyState text="Nicio mașină în această categorie." /></div>
           ) : (
-        <div className="card" style={{ overflowX: "auto" }}>
-          <table>
-            <thead><tr><th>Mașină</th><th>Șofer</th><th>Plan lună</th><th>Adus</th><th>Rest</th></tr></thead>
-            <tbody>
-              {perCar.map(({ car, driver, plan, paid, rest, carryover }) => (
-                <tr key={car.id}>
-                  <td style={{ fontWeight: 600 }}>{car.nr}</td>
-                  <td>{driver ? driver.nume : "—"}</td>
-                  <td className="mono">{fmtMoney(plan)}{carryover > 0 ? <div style={{ fontSize: 10.5, color: "var(--orange)" }}>+{fmtMoney(carryover)} restanță</div> : null}</td>
-                  <td className="mono" style={{ color: "var(--green)" }}>{fmtMoney(paid)}</td>
-                  <td className="mono" style={{ color: rest > 0 ? "var(--orange)" : "var(--muted)" }}>{fmtMoney(rest)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+            <div className="card" style={{ overflowX: "auto" }}>
+              <table>
+                <thead><tr><th>Mașină</th><th>Șofer</th><th>Plan lună</th><th>Adus</th><th>Rest</th><th>Stare</th></tr></thead>
+                <tbody>
+                  {filteredCars.map(({ car, driver, plan, paid, rest, carryover, status }) => (
+                    <tr key={car.id}>
+                      <td style={{ fontWeight: 600 }}>{car.nr}</td>
+                      <td>{driver ? driver.nume : <span style={{ color: "var(--muted)" }}>—</span>}</td>
+                      <td className="mono">{fmtMoney(plan)}{carryover > 0 ? <div style={{ fontSize: 10.5, color: "var(--orange)" }}>+{fmtMoney(carryover)} restanță anterioară</div> : null}</td>
+                      <td className="mono" style={{ color: "var(--green)" }}>{fmtMoney(paid)}</td>
+                      <td className="mono" style={{ color: rest > 0 ? "var(--orange)" : "var(--muted)", fontWeight: rest > 0 ? 700 : 400 }}>{fmtMoney(rest)}</td>
+                      <td><StatusPill status={status} restanta={rest} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ borderTop: "1px solid var(--border, #2a303b)" }}>
+                    <td style={{ fontWeight: 700 }} colSpan={2}>Total</td>
+                    <td className="mono" style={{ fontWeight: 700 }}>{fmtMoney(totals.plan)}</td>
+                    <td className="mono" style={{ fontWeight: 700, color: "var(--green)" }}>{fmtMoney(totals.paid)}</td>
+                    <td className="mono" style={{ fontWeight: 700, color: totals.rest > 0 ? "var(--orange)" : "var(--muted)" }}>{fmtMoney(totals.rest)}</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
