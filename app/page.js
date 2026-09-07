@@ -113,6 +113,40 @@ function isDayElapsed(year, month, day) {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return new Date(year, month, day) <= today;
 }
+const UNAVAILABLE_REASONS = {
+  service: "În service",
+  avariata: "Avariată",
+  vacanta: "Vacanță / concediu",
+  altul: "Altul",
+};
+// O mașină poate avea mai multe perioade (service, avariată, vacanța șoferului
+// etc.) în care nu lucrează. Zilele din aceste perioade nu intră deloc în
+// planul de chirie — nici măcar dacă mașina e altfel "Activă".
+function isDayUnavailable(car, year, month, day) {
+  const periods = car.unavailablePeriods || [];
+  if (!periods.length) return false;
+  const dateOnly = new Date(year, month, day);
+  return periods.some((p) => {
+    if (!p.start || !p.end) return false;
+    const s = new Date(p.start);
+    const e = new Date(p.end);
+    const sOnly = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+    const eOnly = new Date(e.getFullYear(), e.getMonth(), e.getDate());
+    return dateOnly >= sOnly && dateOnly <= eOnly;
+  });
+}
+function unavailablePeriodOnDay(car, year, month, day) {
+  const periods = car.unavailablePeriods || [];
+  const dateOnly = new Date(year, month, day);
+  return periods.find((p) => {
+    if (!p.start || !p.end) return false;
+    const s = new Date(p.start);
+    const e = new Date(p.end);
+    const sOnly = new Date(s.getFullYear(), s.getMonth(), s.getDate());
+    const eOnly = new Date(e.getFullYear(), e.getMonth(), e.getDate());
+    return dateOnly >= sOnly && dateOnly <= eOnly;
+  }) || null;
+}
 function workingDaysEffective(data, car, year, month, weekIdx, ranges) {
   if (!isCarActive(car)) return 0;
   const r = ranges[weekIdx];
@@ -127,6 +161,7 @@ function workingDaysEffective(data, car, year, month, weekIdx, ranges) {
     }
     if (!isDayActive(car, year, month, d)) continue;
     if (!isDayElapsed(year, month, d)) continue;
+    if (isDayUnavailable(car, year, month, d)) continue;
     if (dayRec && dayRec.worked === false) continue;
     count++;
   }
@@ -620,7 +655,7 @@ function ConfirmModal({ message, onConfirm, onCancel }) {
 function CarsView({ data, update }) {
   const [editing, setEditing] = useState(null);
   const [confirm, setConfirm] = useState(null);
-  const empty = { nr: "", marca: "", model: "", an: "", tarif: 157, tarifPeriod: "zi", workDays: 6, driverId: "", status: "activa" };
+  const empty = { nr: "", marca: "", model: "", an: "", tarif: 157, tarifPeriod: "zi", workDays: 6, driverId: "", status: "activa", unavailablePeriods: [] };
   const sortedCars = useMemo(
     () => [...data.cars].sort((a, b) => a.nr.localeCompare(b.nr, "ro", { sensitivity: "base", numeric: true })),
     [data.cars]
@@ -659,7 +694,18 @@ function CarsView({ data, update }) {
                     <td className="mono">{fmtRate(c)}</td>
                     <td className="mono">{carWorkDays(c)}</td>
                     <td>{driver ? driver.nume : <span style={{ color: "var(--muted)" }}>nealocat</span>}</td>
-                    <td><CarStatusPill status={c.status} /></td>
+                    <td>
+                      <CarStatusPill status={c.status} />
+                      {(() => {
+                        const now = nowMoldova();
+                        const p = unavailablePeriodOnDay(c, now.getFullYear(), now.getMonth(), now.getDate());
+                        return p ? (
+                          <div style={{ marginTop: 4 }}>
+                            <span className="pill" style={{ background: "#f2841c22", color: "var(--orange)" }}>{UNAVAILABLE_REASONS[p.reason] || "Nu lucrează"} azi</span>
+                          </div>
+                        ) : null;
+                      })()}
+                    </td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn" style={{ padding: 6, marginRight: 6 }} onClick={() => setEditing(c)}><Pencil size={14} /></button>
                       <button className="btn danger" style={{ padding: 6 }} onClick={() => setConfirm({ message: `Ștergi mașina ${c.nr}? Această acțiune nu poate fi anulată.`, action: () => remove(c.id) })}><Trash2 size={14} /></button>
@@ -741,10 +787,62 @@ function CarForm({ car, drivers, onSave, onCancel }) {
           <option value="vanduta">Vândută</option>
         </select>
       </div>
+      <div className="field">
+        <label>Perioade în care nu lucrează (service, avarie, vacanță…)</label>
+        <div style={{ fontSize: 11, color: "var(--muted)", marginTop: -2, marginBottom: 8 }}>
+          Zilele din aceste perioade nu intră în planul de chirie, indiferent de status.
+        </div>
+        <UnavailablePeriodsEditor periods={f.unavailablePeriods || []} onChange={(next) => set("unavailablePeriods", next)} />
+      </div>
       <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
         <button className="btn primary" style={{ flex: 1, justifyContent: "center" }} onClick={() => f.nr && onSave(f)}><Check size={15} />Salvează</button>
         <button className="btn" onClick={onCancel}>Anulează</button>
       </div>
+    </div>
+  );
+}
+
+function UnavailablePeriodsEditor({ periods, onChange }) {
+  const [reason, setReason] = useState("service");
+  const [start, setStart] = useState(todayISO());
+  const [end, setEnd] = useState(todayISO());
+  const [note, setNote] = useState("");
+
+  const add = () => {
+    if (!start || !end) return;
+    onChange([...periods, { id: uid(), reason, start, end, note: note.trim() }]);
+    setNote("");
+  };
+  const remove = (id) => onChange(periods.filter((p) => p.id !== id));
+
+  return (
+    <div>
+      {periods.length > 0 && (
+        <div style={{ marginBottom: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+          {periods
+            .slice()
+            .sort((a, b) => (a.start < b.start ? -1 : 1))
+            .map((p) => (
+              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, background: "#ffffff0d", borderRadius: 8, padding: "7px 10px", flexWrap: "wrap" }}>
+                <span className="pill" style={{ background: "#f2841c22", color: "var(--orange)" }}>{UNAVAILABLE_REASONS[p.reason] || "Altul"}</span>
+                <span style={{ fontSize: 12.5 }}>
+                  {new Date(p.start).toLocaleDateString("ro-RO")} – {new Date(p.end).toLocaleDateString("ro-RO")}
+                  {p.note ? <span style={{ color: "var(--muted)" }}> · {p.note}</span> : null}
+                </span>
+                <button type="button" className="btn danger" style={{ padding: 5, marginLeft: "auto" }} onClick={() => remove(p.id)}><Trash2 size={13} /></button>
+              </div>
+            ))}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <select style={{ flex: "1 1 140px" }} value={reason} onChange={(e) => setReason(e.target.value)}>
+          {Object.entries(UNAVAILABLE_REASONS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+        </select>
+        <input type="date" style={{ flex: "1 1 130px" }} value={start} onChange={(e) => setStart(e.target.value)} />
+        <input type="date" style={{ flex: "1 1 130px" }} value={end} onChange={(e) => setEnd(e.target.value)} />
+      </div>
+      <input style={{ marginTop: 8 }} placeholder="Notă (opțional)" value={note} onChange={(e) => setNote(e.target.value)} />
+      <button type="button" className="btn" style={{ marginTop: 8 }} onClick={add}><Plus size={14} />Adaugă perioadă</button>
     </div>
   );
 }
@@ -1010,6 +1108,14 @@ function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expande
     saveStart(`${year}-${String(month + 1).padStart(2, "0")}-01`);
   };
 
+  // Perioadele de nefuncționare care se suprapun cu luna afișată acum.
+  const monthStart = new Date(year, month, 1);
+  const monthEnd = new Date(year, month, daysInMonth(year, month));
+  const periodsThisMonth = (car.unavailablePeriods || []).filter((p) => {
+    if (!p.start || !p.end) return false;
+    return new Date(p.end) >= monthStart && new Date(p.start) <= monthEnd;
+  });
+
   return (
     <div className="card" style={{ marginBottom: 10, padding: 0, overflow: "hidden" }}>
       <button
@@ -1047,6 +1153,16 @@ function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expande
           <span style={{ fontSize: 11, color: "var(--muted)" }}>restanța nu se calculează cât timp nu e activă</span>
         )}
       </div>
+
+      {periodsThisMonth.length > 0 && (
+        <div style={{ padding: "0 16px 10px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {periodsThisMonth.map((p) => (
+            <span key={p.id} className="pill" style={{ background: "#f2841c22", color: "var(--orange)" }}>
+              {UNAVAILABLE_REASONS[p.reason] || "Nu lucrează"}: {new Date(p.start).toLocaleDateString("ro-RO")}–{new Date(p.end).toLocaleDateString("ro-RO")}
+            </span>
+          ))}
+        </div>
+      )}
 
       <div style={{ padding: "0 16px 10px", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {car.startDate ? (
@@ -1187,6 +1303,8 @@ function DayRow({ car, year, month, day, rec, onSetDay }) {
   const countsInPlan = !!(existing && existing.countsInPlan);
   const toggleCountsInPlan = (next) => onSetDay(day, { countsInPlan: next });
 
+  const unavailable = unavailablePeriodOnDay(car, year, month, day);
+
   return (
     <div className="dayrow" style={{ display: "block" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -1200,6 +1318,11 @@ function DayRow({ car, year, month, day, rec, onSetDay }) {
             <button type="button" className={!countsInPlan ? "active" : ""} onClick={() => toggleCountsInPlan(false)}>Nu intră în plan</button>
             <button type="button" className={countsInPlan ? "active" : ""} onClick={() => toggleCountsInPlan(true)}>Numără în plan</button>
           </div>
+        )}
+        {unavailable && (
+          <span className="pill" style={{ background: "#f2841c22", color: "var(--orange)" }} title="Zi exclusă automat din planul de chirie">
+            {UNAVAILABLE_REASONS[unavailable.reason] || "Nu lucrează"} — nu intră în plan
+          </span>
         )}
       </div>
       {worked ? (
