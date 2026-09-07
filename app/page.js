@@ -3,8 +3,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   Car, Users, Calendar as CalendarIcon, Wallet, BarChart3, Plus, X,
   Trash2, Pencil, Check, AlertTriangle, ChevronLeft, ChevronRight,
-  Phone, Loader2, TrendingUp, TrendingDown, Gauge, Shield, Wrench, Search,
-  RefreshCw
+  Phone, Loader2, TrendingUp, TrendingDown, Gauge, Shield, Wrench, Search
 } from "lucide-react";
 
 /* ---------------------------------------------------------------
@@ -248,14 +247,6 @@ export default function TaxiFleetPro() {
     });
   }, [persist]);
 
-  // Ruta /api/yandex/sync scrie deja direct în Supabase (același rând
-  // "fleet_data" ca tot restul aplicației), deci aici doar aliniem starea
-  // locală la ce a scris serverul — fără să mai trimitem încă un POST,
-  // ca să nu riscăm să suprascriem sincronizarea cu date locale vechi.
-  const applySynced = useCallback((next) => {
-    setData(next);
-  }, []);
-
   if (loading || !data) {
     return (
       <Shell tab={tab} setTab={setTab} loading>
@@ -277,7 +268,7 @@ export default function TaxiFleetPro() {
       {tab === "inspection" && <InspectionView data={data} update={update} />}
       {tab === "finance" && <FinanceView data={data} update={update} />}
       {tab === "reports" && <ReportsView data={data} />}
-      {tab === "yandex" && <YandexView data={data} onSynced={applySynced} />}
+      {tab === "earnings" && <EarningsView data={data} update={update} />}
     </Shell>
   );
 }
@@ -288,6 +279,9 @@ function Shell({ tab, setTab, children, loading, saveError }) {
   const navGroups = [
     { label: "General", items: [
       { id: "dashboard", label: "Dashboard", icon: Gauge },
+    ] },
+    { label: "Introducere rapidă", items: [
+      { id: "earnings", label: "Încasări zilnice", icon: TrendingUp },
     ] },
     { label: "Flotă", items: [
       { id: "cars", label: "Mașini", icon: Car },
@@ -301,9 +295,6 @@ function Shell({ tab, setTab, children, loading, saveError }) {
     { label: "Bani", items: [
       { id: "finance", label: "Finanțe", icon: Wallet },
       { id: "reports", label: "Rapoarte", icon: BarChart3 },
-    ] },
-    { label: "Integrări", items: [
-      { id: "yandex", label: "Yandex", icon: RefreshCw },
     ] },
   ];
   const flatNav = navGroups.flatMap((g) => g.items);
@@ -501,14 +492,14 @@ function Dashboard({ data, setTab }) {
     return { cash, card };
   })();
 
-  const todayYandexRows = (data.yandexDrivers || [])
-    .map((d) => {
-      const rec = (data.yandexEarnings || {})[`${todayISO()}__${d.yandex_driver_id}`];
-      return { name: d.full_name, car: d.car_plate, gross: rec ? Number(rec.total_gross) : 0, net: rec ? Number(rec.net_payout) : 0 };
-    })
-    .filter((r) => r.gross > 0)
-    .sort((a, b) => b.net - a.net)
-    .slice(0, 5);
+  const todayRanges = weekRanges(year, month);
+  const todayWeekIdx = currentWeekIndex(year, month, day, todayRanges);
+  const carsWithDriver = data.cars.filter((c) => c.driverId && isCarActive(c));
+  const missingTodayCount = carsWithDriver.filter((c) => {
+    const rec = weeklyRecord(data, year, month, c.id, todayWeekIdx);
+    const dayRec = rec && rec.dailyAmounts ? rec.dailyAmounts[day] : null;
+    return !dayRec;
+  }).length;
 
   const stats = [
     { label: "Mașini", value: data.cars.length, icon: Car, sub: `${activeCars} active · ${inService} service` },
@@ -532,6 +523,13 @@ function Dashboard({ data, setTab }) {
         ))}
       </div>
 
+      {missingTodayCount > 0 && (
+        <div className="card" style={{ borderColor: "#f2b70555", marginBottom: 16, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <TrendingUp size={17} color="var(--amber)" />
+          <div style={{ fontSize: 13.5 }}>{missingTodayCount} mașin{missingTodayCount === 1 ? "ă nu are" : "i nu au"} încă încasările de azi introduse.</div>
+          <button className="btn primary" style={{ marginLeft: "auto" }} onClick={() => setTab("earnings")}>Introdu acum</button>
+        </div>
+      )}
       {problemCount > 0 && (
         <div className="card" style={{ borderColor: "#e5484d55", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
           <AlertTriangle size={17} color="var(--red)" />
@@ -580,32 +578,6 @@ function Dashboard({ data, setTab }) {
         )}
       </div>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div>
-            <div style={{ fontWeight: 700 }} className="disp">Yandex astăzi, pe șoferi</div>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>Top 5 după câștig net · {todayISO()}</div>
-          </div>
-          <button className="btn" onClick={() => setTab("yandex")}>Deschide Yandex</button>
-        </div>
-        {todayYandexRows.length === 0 ? (
-          <EmptyState text='Nicio dată sincronizată încă pentru azi. Deschide fila Yandex și apasă "Sincronizează cu Yandex".' />
-        ) : (
-          <table>
-            <thead><tr><th>Șofer</th><th>Mașină</th><th>Brut</th><th>Net</th></tr></thead>
-            <tbody>
-              {todayYandexRows.map((r) => (
-                <tr key={r.name + r.car}>
-                  <td style={{ fontWeight: 600 }}>{r.name}</td>
-                  <td>{r.car || <span style={{ color: "var(--muted)" }}>—</span>}</td>
-                  <td className="mono">{fmtMoney(r.gross)}</td>
-                  <td className="mono" style={{ color: "var(--green)", fontWeight: 700 }}>{fmtMoney(r.net)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
     </div>
   );
 }
@@ -1793,114 +1765,175 @@ function IncomeForm({ onSave, onCancel }) {
   );
 }
 
-/* ============================== YANDEX ============================== */
+/* ============================== ÎNCASĂRI ZILNICE ============================== */
+// Ecran de introducere rapidă: toate mașinile cu șofer alocat, pentru O SINGURĂ
+// zi, într-un singur tabel — ca să nu mai umbli mașină cu mașină prin Calendar
+// doar ca să notezi cine cât a adus azi. Scrie în ACELEAȘI date ca și Calendarul
+// (weeklyPayments, mod "daily"), deci ce introduci aici apare automat și acolo.
 
-function YandexView({ data, onSynced }) {
+function EarningsView({ data, update }) {
   const [date, setDate] = useState(todayISO());
-  const [syncing, setSyncing] = useState(false);
-  const [error, setError] = useState(null);
-  const [search, setSearch] = useState("");
+  const [y, m, d] = date.split("-").map(Number);
+  const year = y, month = m - 1, day = d;
+  const ranges = weekRanges(year, month);
+  const weekIdx = currentWeekIndex(year, month, day, ranges);
 
-  const drivers = data.yandexDrivers || [];
-  const earnings = data.yandexEarnings || {};
-
-  const rows = useMemo(() => drivers.map((d) => {
-    const rec = earnings[`${date}__${d.yandex_driver_id}`] || null;
-    return {
-      ...d,
-      total_cash: rec ? Number(rec.total_cash) : 0,
-      total_card: rec ? Number(rec.total_card) : 0,
-      total_gross: rec ? Number(rec.total_gross) : 0,
-      yandex_commission: rec ? Number(rec.yandex_commission) : 0,
-      park_commission: rec ? Number(rec.park_commission) : 0,
-      net_payout: rec ? Number(rec.net_payout) : 0,
-      other_partner_payments: rec ? Number(rec.other_partner_payments) : 0,
-      has_data: !!rec,
-    };
-  }), [drivers, earnings, date]);
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) => r.full_name?.toLowerCase().includes(q) || r.car_plate?.toLowerCase().includes(q));
-  }, [rows, search]);
-
-  const totals = useMemo(() => ({
-    gross: rows.reduce((s, r) => s + r.total_gross, 0),
-    commission: rows.reduce((s, r) => s + r.yandex_commission + r.park_commission, 0),
-    active: rows.filter((r) => r.has_data && r.total_gross > 0).length,
-  }), [rows]);
-
-  const sync = async () => {
-    setSyncing(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/yandex/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date }),
+  const cars = useMemo(() => {
+    return data.cars
+      .filter((c) => c.driverId && isCarActive(c))
+      .sort((a, b) => {
+        const da = data.drivers.find((x) => x.id === a.driverId);
+        const db = data.drivers.find((x) => x.id === b.driverId);
+        return (da ? da.nume : "").localeCompare(db ? db.nume : "", "ro", { sensitivity: "base" });
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Eroare la sincronizare");
-      onSynced(json.data);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSyncing(false);
-    }
+  }, [data.cars, data.drivers]);
+
+  const setDay = (car, entry) => {
+    const k = weekKey(year, month, car.id, weekIdx);
+    update((prev) => {
+      const existing = prev.weeklyPayments[k] || { year, month, carId: car.id, weekIdx, mode: "daily", paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
+      const prevDay = (existing.dailyAmounts || {})[day] || {};
+      const merged = { worked: true, cash: 0, card: 0, note: "", ...prevDay, ...entry };
+      if (!merged.worked) { merged.cash = 0; merged.card = 0; }
+      const dailyAmounts = { ...(existing.dailyAmounts || {}), [day]: merged };
+      const paidCash = Object.values(dailyAmounts).reduce((s, dd) => s + (dd.worked === false ? 0 : Number(dd.cash || 0)), 0);
+      const paidCard = Object.values(dailyAmounts).reduce((s, dd) => s + (dd.worked === false ? 0 : Number(dd.card || 0)), 0);
+      const paidAmount = paidCash + paidCard;
+      const rec = { ...existing, year, month, carId: car.id, weekIdx, mode: "daily", dailyAmounts, paidCash, paidCard, paidAmount };
+      return { ...prev, weeklyPayments: { ...prev.weeklyPayments, [k]: rec } };
+    });
   };
+
+  const rows = cars.map((car) => {
+    const rec = weeklyRecord(data, year, month, car.id, weekIdx);
+    const dayRec = rec && rec.dailyAmounts ? rec.dailyAmounts[day] : null;
+    const driver = data.drivers.find((dd) => dd.id === car.driverId);
+    return { car, driver, dayRec };
+  });
+
+  const totals = rows.reduce((acc, r) => {
+    if (r.dayRec && r.dayRec.worked !== false) {
+      acc.cash += Number(r.dayRec.cash || 0);
+      acc.card += Number(r.dayRec.card || 0);
+    }
+    return acc;
+  }, { cash: 0, card: 0 });
+  const enteredCount = rows.filter((r) => !!r.dayRec).length;
+
+  const shiftDate = (delta) => {
+    const dt = new Date(year, month, day + delta);
+    setDate(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`);
+  };
+
+  // Clasament pe luna afișată — cine a adus cel mai mult, cumulat pe toate zilele.
+  const leaderboard = useMemo(() => {
+    const map = new Map(); // driverId -> total
+    Object.values(data.weeklyPayments).forEach((rec) => {
+      if (rec.year !== year || rec.month !== month || rec.mode !== "daily" || !rec.dailyAmounts) return;
+      const car = data.cars.find((c) => c.id === rec.carId);
+      if (!car || !car.driverId) return;
+      const driver = data.drivers.find((dr) => dr.id === car.driverId);
+      if (!driver) return;
+      let sum = 0;
+      Object.values(rec.dailyAmounts).forEach((dd) => { if (dd.worked !== false) sum += Number(dd.cash || 0) + Number(dd.card || 0); });
+      map.set(driver.id, { name: driver.nume, total: (map.get(driver.id)?.total || 0) + sum });
+    });
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
+  }, [data.weeklyPayments, data.cars, data.drivers, year, month]);
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
-        <input type="date" value={date} max={todayISO()} onChange={(e) => setDate(e.target.value)} style={{ maxWidth: 170 }} />
-        <button className="btn primary" onClick={sync} disabled={syncing}>
-          {syncing ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />}
-          Sincronizează cu Yandex
-        </button>
-      </div>
-
-      {error && (
-        <div className="card" style={{ borderColor: "#e5484d55", marginBottom: 14 }}>
-          <div className="save-warn"><AlertTriangle size={14} />{error}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <button className="btn" style={{ padding: 8 }} onClick={() => shiftDate(-1)}><ChevronLeft size={16} /></button>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={{ maxWidth: 170 }} />
+        <button className="btn" style={{ padding: 8 }} onClick={() => shiftDate(1)}><ChevronRight size={16} /></button>
+        {date !== todayISO() && <button className="btn" onClick={() => setDate(todayISO())}>Azi</button>}
+        <div style={{ marginLeft: "auto", fontSize: 12, color: "var(--muted)" }}>
+          {enteredCount}/{rows.length} mașini completate
         </div>
-      )}
+      </div>
 
       <div className="finance-grid" style={{ display: "grid", gap: 10, marginBottom: 16 }}>
-        <MiniStat label="Total venituri parc" value={fmtMoney(totals.gross)} color="var(--green)" />
-        <MiniStat label="Șoferi activi azi" value={totals.active} color="var(--amber)" />
-        <MiniStat label="Total comision parc" value={fmtMoney(totals.commission)} color="var(--orange)" />
+        <MiniStat label="Numerar azi" value={fmtMoney(totals.cash)} color="var(--green)" />
+        <MiniStat label="Card azi" value={fmtMoney(totals.card)} color="var(--green)" />
+        <MiniStat label="Total azi" value={fmtMoney(totals.cash + totals.card)} color="var(--amber)" />
       </div>
 
-      <div className="field">
-        <input placeholder="Caută după nume sau nr. înmatriculare…" value={search} onChange={(e) => setSearch(e.target.value)} />
-      </div>
-
-      {drivers.length === 0 ? (
-        <div className="card"><EmptyState text='Nu ai încă șoferi sincronizați. Apasă "Sincronizează cu Yandex".' /></div>
-      ) : filtered.length === 0 ? (
-        <div className="card"><EmptyState text="Niciun rezultat pentru căutarea curentă." /></div>
+      {rows.length === 0 ? (
+        <div className="card"><EmptyState text="Nicio mașină cu șofer alocat. Alocă un șofer la o mașină (secțiunea Mașini) ca să apară aici." /></div>
       ) : (
         <div className="card" style={{ overflowX: "auto" }}>
           <table>
-            <thead>
-              <tr>
-                <th>Șofer</th><th>Nr. înmatriculare</th><th>Alte plăți ale partenerului, MDL</th>
-              </tr>
-            </thead>
+            <thead><tr><th>Șofer / Mașină</th><th>Stare</th><th>Numerar</th><th>Card</th><th>Total</th></tr></thead>
             <tbody>
-              {filtered.map((r) => (
-                <tr key={r.yandex_driver_id}>
-                  <td style={{ fontWeight: 600 }}>{r.full_name}</td>
-                  <td>{r.car_plate || <span style={{ color: "var(--muted)" }}>—</span>}</td>
-                  <td className="mono" style={{ fontWeight: 700 }}>{fmtMoney(r.other_partner_payments)}</td>
-                </tr>
-              ))}
+              {rows.map(({ car, driver, dayRec }) => {
+                const worked = dayRec ? dayRec.worked !== false : true;
+                return (
+                  <EarningsRow
+                    key={`${date}-${car.id}`}
+                    car={car} driver={driver} dayRec={dayRec} worked={worked}
+                    onCommit={(entry) => setDay(car, entry)}
+                    onToggleWorked={(w) => setDay(car, { worked: w })}
+                  />
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <div style={{ fontWeight: 700, marginBottom: 4 }} className="disp">Clasament luna {MONTHS_RO[month]}</div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Cine a adus cel mai mult, cumulat pe toată luna</div>
+        {leaderboard.length === 0 ? (
+          <EmptyState text="Nicio încasare introdusă încă luna asta." />
+        ) : (
+          <table>
+            <thead><tr><th>#</th><th>Șofer</th><th>Total lună</th></tr></thead>
+            <tbody>
+              {leaderboard.map((r, i) => (
+                <tr key={r.name + i}>
+                  <td className="mono" style={{ color: i === 0 ? "var(--amber)" : "var(--muted)", fontWeight: 700 }}>{i + 1}</td>
+                  <td style={{ fontWeight: 600 }}>{r.name}</td>
+                  <td className="mono" style={{ fontWeight: 700, color: "var(--green)" }}>{fmtMoney(r.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
     </div>
+  );
+}
+
+function EarningsRow({ car, driver, dayRec, worked, onCommit, onToggleWorked }) {
+  const [cash, setCash] = useState(dayRec ? dayRec.cash : "");
+  const [card, setCard] = useState(dayRec ? dayRec.card : "");
+  const commit = () => onCommit({ cash, card, worked: true });
+  const total = (Number(cash) || 0) + (Number(card) || 0);
+
+  return (
+    <tr>
+      <td>
+        <div style={{ fontWeight: 600 }}>{driver ? driver.nume : <span style={{ color: "var(--muted)" }}>—</span>}</div>
+        <div style={{ fontSize: 11.5, color: "var(--muted)" }}>{car.nr}{car.marca ? ` · ${car.marca} ${car.model}` : ""}</div>
+      </td>
+      <td>
+        <div className="modetoggle">
+          <button type="button" className={worked ? "active" : ""} onClick={() => onToggleWorked(true)}>A lucrat</button>
+          <button type="button" className={!worked ? "active" : ""} onClick={() => onToggleWorked(false)}>Liber</button>
+        </div>
+      </td>
+      {worked ? (
+        <>
+          <td style={{ minWidth: 110 }}><input type="number" placeholder="0" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commit} /></td>
+          <td style={{ minWidth: 110 }}><input type="number" placeholder="0" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commit} /></td>
+          <td className="mono" style={{ fontWeight: 700 }}>{fmtMoney(total)}</td>
+        </>
+      ) : (
+        <td colSpan={3} style={{ color: "var(--muted)", fontSize: 12.5 }}>Zi liberă / nu a lucrat</td>
+      )}
+    </tr>
   );
 }
 
