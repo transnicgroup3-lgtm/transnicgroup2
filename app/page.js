@@ -120,13 +120,15 @@ function workingDaysEffective(data, car, year, month, weekIdx, ranges) {
   const rec = weeklyRecord(data, year, month, car.id, weekIdx);
   let count = 0;
   for (let d = r.start; d <= r.end; d++) {
-    if (!isCarWorkDay(car, year, month, d)) continue;
+    const dayRec = rec && rec.dailyAmounts ? rec.dailyAmounts[d] : null;
+    if (!isCarWorkDay(car, year, month, d)) {
+      // Zi liberă în mod normal (de regulă duminica) — o numărăm în plan
+      // DOAR dacă a fost bifată explicit opțiunea "Numără în plan" pe ziua asta.
+      if (!(isSunday(year, month, d) && dayRec && dayRec.countsInPlan)) continue;
+    }
     if (!isDayActive(car, year, month, d)) continue;
     if (!isDayElapsed(year, month, d)) continue;
-    if (rec && rec.mode === "daily" && rec.dailyAmounts) {
-      const dayRec = rec.dailyAmounts[d];
-      if (dayRec && dayRec.worked === false) continue;
-    }
+    if (dayRec && dayRec.worked === false) continue;
     count++;
   }
   return count;
@@ -175,10 +177,16 @@ function weekPlan(data, car, year, month, weekIdx, ranges) {
 }
 
 const DAY_NAMES_RO = ["Duminică", "Luni", "Marți", "Miercuri", "Joi", "Vineri", "Sâmbătă"];
+// Duminica apare mereu în calendar (ca să poți nota dacă a lucrat/a adus bani),
+// dar NU intră automat în planul/calculul zilelor lucrate — doar dacă bifezi
+// explicit "Numără în plan" pe rândul ei (vezi DayRow + workingDaysEffective).
 function weekDays(car, year, month, weekIdx, ranges) {
   const r = ranges[weekIdx];
   const days = [];
-  for (let d = r.start; d <= r.end; d++) if (isCarWorkDay(car, year, month, d)) days.push(d);
+  for (let d = r.start; d <= r.end; d++) {
+    if (isCarWorkDay(car, year, month, d)) days.push(d);
+    else if (isSunday(year, month, d)) days.push(d);
+  }
   return days;
 }
 function dayLabel(year, month, day) {
@@ -1096,7 +1104,7 @@ function WeekRow({ car, data, year, month, weekIdx, range, ranges, isCurrent, on
       ) : (
         <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>
           {days.map((day) => (
-            <DayRow key={day} year={year} month={month} day={day} rec={rec} onSetDay={onSetDay} />
+            <DayRow key={day} car={car} year={year} month={month} day={day} rec={rec} onSetDay={onSetDay} />
           ))}
         </div>
       )}
@@ -1104,7 +1112,7 @@ function WeekRow({ car, data, year, month, weekIdx, range, ranges, isCurrent, on
   );
 }
 
-function DayRow({ year, month, day, rec, onSetDay }) {
+function DayRow({ car, year, month, day, rec, onSetDay }) {
   const existing = rec && rec.dailyAmounts ? rec.dailyAmounts[day] : null;
   const worked = existing ? existing.worked !== false : true;
   const [cash, setCash] = useState(existing ? existing.cash : "");
@@ -1125,14 +1133,26 @@ function DayRow({ year, month, day, rec, onSetDay }) {
     else onSetDay(day, { worked: false, note });
   };
 
+  // Duminica e afișată mereu, dar nu e o zi lucrătoare "normală" a mașinii —
+  // implicit nu intră în planul săptămânii; aici poți bifa explicit s-o incluzi.
+  const isExtraSunday = isSunday(year, month, day) && !isCarWorkDay(car, year, month, day);
+  const countsInPlan = !!(existing && existing.countsInPlan);
+  const toggleCountsInPlan = (next) => onSetDay(day, { countsInPlan: next });
+
   return (
     <div className="dayrow" style={{ display: "block" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <div style={{ fontSize: 12, color: "var(--muted)", width: 62, flexShrink: 0 }}>{dayLabel(year, month, day)}</div>
         <div className="modetoggle">
           <button type="button" className={worked ? "active" : ""} onClick={() => toggleWorked(true)}>A lucrat</button>
           <button type="button" className={!worked ? "active" : ""} onClick={() => toggleWorked(false)}>Nu a lucrat</button>
         </div>
+        {isExtraSunday && (
+          <div className="modetoggle" title="Implicit duminica nu intră în planul/calculul zilelor lucrate.">
+            <button type="button" className={!countsInPlan ? "active" : ""} onClick={() => toggleCountsInPlan(false)}>Nu intră în plan</button>
+            <button type="button" className={countsInPlan ? "active" : ""} onClick={() => toggleCountsInPlan(true)}>Numără în plan</button>
+          </div>
+        )}
       </div>
       {worked ? (
         <div style={{ marginTop: 6, marginLeft: 70 }}>
