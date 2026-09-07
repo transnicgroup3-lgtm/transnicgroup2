@@ -285,68 +285,104 @@ export default function TaxiFleetPro() {
 /* ============================== SHELL ============================== */
 
 function Shell({ tab, setTab, children, loading, saveError }) {
-  const nav = [
-    { id: "dashboard", label: "Dashboard", icon: Gauge },
-    { id: "cars", label: "Mașini", icon: Car },
-    { id: "drivers", label: "Șoferi", icon: Users },
-    { id: "calendar", label: "Calendar", icon: CalendarIcon },
-    { id: "insurance", label: "Asigurări", icon: Shield },
-    { id: "inspection", label: "Revizie tehnică", icon: Wrench },
-    { id: "finance", label: "Finanțe", icon: Wallet },
-    { id: "reports", label: "Rapoarte", icon: BarChart3 },
-    { id: "yandex", label: "Yandex", icon: RefreshCw },
+  const navGroups = [
+    { label: "General", items: [
+      { id: "dashboard", label: "Dashboard", icon: Gauge },
+    ] },
+    { label: "Flotă", items: [
+      { id: "cars", label: "Mașini", icon: Car },
+      { id: "drivers", label: "Șoferi", icon: Users },
+      { id: "calendar", label: "Calendar", icon: CalendarIcon },
+    ] },
+    { label: "Documente", items: [
+      { id: "insurance", label: "Asigurări", icon: Shield },
+      { id: "inspection", label: "Revizie tehnică", icon: Wrench },
+    ] },
+    { label: "Bani", items: [
+      { id: "finance", label: "Finanțe", icon: Wallet },
+      { id: "reports", label: "Rapoarte", icon: BarChart3 },
+    ] },
+    { label: "Integrări", items: [
+      { id: "yandex", label: "Yandex", icon: RefreshCw },
+    ] },
   ];
+  const flatNav = navGroups.flatMap((g) => g.items);
+  const current = flatNav.find((n) => n.id === tab);
 
   return (
     <div style={{ "--bg": "#14171c", "--panel": "#1c2029", "--amber": "#f2b705", "--orange": "#f2841c", "--green": "#2bb673", "--red": "#e5484d", "--text": "#eae7e0", "--muted": "#8b93a1", "--border": "#2a303b" }}
       className="tfp-root">
       <style>{`
-        .tfp-root{background:var(--bg);color:var(--text);min-height:100vh;font-family:'Inter',system-ui,sans-serif;display:flex;flex-direction:column}
+        .tfp-root{background:var(--bg);color:var(--text);min-height:100vh;font-family:'Inter',system-ui,sans-serif;display:flex;flex-direction:row;font-size:14.5px}
         .tfp-root *{box-sizing:border-box}
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap');
         .disp{font-family:'Space Grotesk',sans-serif}
         .mono{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums}
         .spin{animation:spin 1s linear infinite}
         @keyframes spin{to{transform:rotate(360deg)}}
-        .tfp-header{padding:18px 20px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;background:var(--bg);z-index:5}
+
+        /* --- Sidebar (desktop) --- */
+        .tfp-sidebar{width:236px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto}
+        .tfp-sidebar-header{padding:22px 18px 18px;display:flex;align-items:center;gap:10px}
+        .tfp-badge{width:36px;height:36px;border-radius:9px;background:repeating-linear-gradient(45deg,var(--amber) 0 6px,#14171c 6px 12px);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+        .tfp-sidebar-nav{padding:6px 12px 16px;display:flex;flex-direction:column;gap:2px;flex:1}
+        .tfp-group-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:16px 10px 6px;font-weight:700}
+        .tfp-group-label:first-child{padding-top:6px}
+        .tfp-sidebar .tfp-navbtn{width:100%;justify-content:flex-start;padding:10px 12px;font-size:14.5px}
+        .tfp-sidebar-foot{padding:14px 18px;border-top:1px solid var(--border);font-size:11.5px;color:var(--muted)}
+
+        /* --- Mobile top bar + horizontal nav --- */
+        .tfp-topbar{display:none;padding:16px 18px;border-bottom:1px solid var(--border);align-items:center;justify-content:space-between;gap:12px;position:sticky;top:0;background:var(--bg);z-index:5}
         .tfp-title{display:flex;align-items:center;gap:10px}
-        .tfp-badge{width:34px;height:34px;border-radius:8px;background:repeating-linear-gradient(45deg,var(--amber) 0 6px,#14171c 6px 12px);display:flex;align-items:center;justify-content:center;flex-shrink:0}
-        .tfp-nav{display:flex;gap:4px;padding:10px 14px;border-bottom:1px solid var(--border);overflow-x:auto;-webkit-overflow-scrolling:touch}
+        .tfp-nav{display:none;gap:4px;padding:10px 14px;border-bottom:1px solid var(--border);overflow-x:auto;-webkit-overflow-scrolling:touch}
         .tfp-nav::-webkit-scrollbar{display:none}
-        .tfp-navbtn{display:flex;align-items:center;gap:7px;padding:8px 13px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--muted);font-size:13.5px;font-weight:600;white-space:nowrap;cursor:pointer;transition:.15s}
-        .tfp-navbtn:hover{color:var(--text);background:#ffffff08}
+
+        .tfp-navbtn{display:flex;align-items:center;gap:9px;padding:9px 13px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--muted);font-size:14px;font-weight:600;white-space:nowrap;cursor:pointer;transition:.15s}
+        .tfp-navbtn:hover{color:var(--text);background:#ffffff0a}
         .tfp-navbtn.active{color:#14171c;background:var(--amber)}
-        .tfp-body{padding:20px;flex:1;max-width:1100px;margin:0 auto;width:100%}
-        .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px}
-        .btn{display:inline-flex;align-items:center;gap:6px;padding:9px 14px;border-radius:8px;border:1px solid var(--border);background:#ffffff0d;color:var(--text);font-size:13.5px;font-weight:600;cursor:pointer;transition:.15s}
+
+        .tfp-main{flex:1;min-width:0;display:flex;flex-direction:column}
+        .tfp-pageheader{padding:22px 24px 4px;display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1100px;margin:0 auto;width:100%}
+        .tfp-pagetitle{font-size:21px;font-weight:700}
+        .tfp-body{padding:16px 24px 28px;flex:1;max-width:1100px;margin:0 auto;width:100%}
+        .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px}
+        .btn{display:inline-flex;align-items:center;gap:6px;padding:10px 16px;border-radius:8px;border:1px solid var(--border);background:#ffffff0d;color:var(--text);font-size:14px;font-weight:600;cursor:pointer;transition:.15s}
         .btn:hover{background:#ffffff1a}
         .btn.primary{background:var(--amber);color:#14171c;border-color:var(--amber)}
         .btn.primary:hover{background:#ffcb2b}
         .btn.danger{color:var(--red);border-color:#e5484d33}
         .btn.danger:hover{background:#e5484d1a}
-        input,select,textarea{background:#0f1216;border:1px solid var(--border);color:var(--text);border-radius:7px;padding:8px 10px;font-size:13.5px;font-family:inherit;width:100%}
+        input,select,textarea{background:#0f1216;border:1px solid var(--border);color:var(--text);border-radius:7px;padding:10px 12px;font-size:14.5px;font-family:inherit;width:100%}
         input:focus,select:focus,textarea:focus{outline:2px solid var(--amber);outline-offset:1px}
-        table{width:100%;border-collapse:collapse;font-size:13.5px}
-        th{text-align:left;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
-        td{padding:9px 10px;border-bottom:1px solid #ffffff0a}
+        table{width:100%;border-collapse:collapse;font-size:14px}
+        th{text-align:left;color:var(--muted);font-weight:600;padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+        td{padding:11px 12px;border-bottom:1px solid #ffffff0a}
+        tbody tr:hover td{background:#ffffff06}
         .modal-backdrop{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
-        .modal{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:20px;width:100%;max-width:420px;max-height:88vh;overflow:auto}
+        .modal{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:22px;width:100%;max-width:440px;max-height:88vh;overflow:auto}
         .pill{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:99px;font-size:12px;font-weight:600}
-        .field{margin-bottom:12px}
-        .field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px;font-weight:600}
-        .save-warn{font-size:12px;color:var(--red);display:flex;align-items:center;gap:5px}
-        .quickbtn{flex:1;padding:9px 6px;border-radius:8px;border:1px solid var(--border);background:#ffffff0d;color:var(--text);font-size:12.5px;font-weight:700;cursor:pointer}
+        .field{margin-bottom:14px}
+        .field label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:6px;font-weight:600}
+        .save-warn{font-size:12.5px;color:var(--red);display:flex;align-items:center;gap:5px}
+        .quickbtn{flex:1;padding:10px 6px;border-radius:8px;border:1px solid var(--border);background:#ffffff0d;color:var(--text);font-size:13px;font-weight:700;cursor:pointer}
         .quickbtn:hover{background:#ffffff1a}
-        .tfp-footer{padding:16px 20px;border-top:1px solid var(--border);text-align:center;font-size:12px;color:var(--muted)}
+        .tfp-footer{padding:16px 24px;border-top:1px solid var(--border);text-align:center;font-size:12px;color:var(--muted)}
         .finance-grid{grid-template-columns:1fr 1fr}
-        .weekrow{padding:9px 0;border-top:1px solid #ffffff0a}
+        .weekrow{padding:10px 0;border-top:1px solid #ffffff0a}
         .weekrow:first-child{border-top:none}
         .modetoggle{display:flex;border:1px solid var(--border);border-radius:7px;overflow:hidden}
-        .modetoggle button{padding:6px 9px;font-size:11.5px;font-weight:600;background:transparent;color:var(--muted);border:none;cursor:pointer}
+        .modetoggle button{padding:7px 10px;font-size:12px;font-weight:600;background:transparent;color:var(--muted);border:none;cursor:pointer}
         .modetoggle button+button{border-left:1px solid var(--border)}
         .modetoggle button.active{background:var(--amber);color:#14171c}
-        .dayrow{padding-bottom:6px;border-bottom:1px solid #ffffff08}
+        .dayrow{padding-bottom:7px;border-bottom:1px solid #ffffff08}
         .dayrow:last-child{border-bottom:none;padding-bottom:0}
+
+        @media (max-width: 900px){
+          .tfp-sidebar{display:none}
+          .tfp-topbar{display:flex}
+          .tfp-nav{display:flex}
+          .tfp-pageheader{display:none}
+        }
         @media (max-width: 680px){
           .finance-grid{grid-template-columns:1fr}
           .tfp-navbtn{padding:11px 14px;font-size:14px}
@@ -358,31 +394,71 @@ function Shell({ tab, setTab, children, loading, saveError }) {
         }
       `}</style>
 
-      <div className="tfp-header">
-        <div className="tfp-title">
-          <div className="tfp-badge"><Car size={16} color="#14171c" /></div>
+      {/* Sidebar — vizibilă pe ecrane late (calculator) */}
+      <aside className="tfp-sidebar">
+        <div className="tfp-sidebar-header">
+          <div className="tfp-badge"><Car size={17} color="#14171c" /></div>
           <div>
-            <div className="disp" style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.1 }}>Taxi Fleet Pro</div>
+            <div className="disp" style={{ fontSize: 16.5, fontWeight: 700, lineHeight: 1.15 }}>Taxi Fleet Pro</div>
             <div style={{ fontSize: 11, color: "var(--muted)" }}>Gestionare taxi</div>
           </div>
         </div>
-        {saveError && <div className="save-warn"><AlertTriangle size={14} />Salvarea a eșuat</div>}
+        <nav className="tfp-sidebar-nav">
+          {navGroups.map((g) => (
+            <React.Fragment key={g.label}>
+              <div className="tfp-group-label">{g.label}</div>
+              {g.items.map((n) => (
+                <button key={n.id} className={"tfp-navbtn" + (tab === n.id ? " active" : "")} onClick={() => !loading && setTab(n.id)}>
+                  <n.icon size={16} />{n.label}
+                </button>
+              ))}
+            </React.Fragment>
+          ))}
+        </nav>
+        {saveError && (
+          <div className="tfp-sidebar-foot">
+            <div className="save-warn"><AlertTriangle size={14} />Salvarea a eșuat</div>
+          </div>
+        )}
+      </aside>
+
+      <div className="tfp-main">
+        {/* Bară de sus — vizibilă doar pe mobil, înlocuiește sidebar-ul */}
+        <div className="tfp-topbar">
+          <div className="tfp-title">
+            <div className="tfp-badge"><Car size={16} color="#14171c" /></div>
+            <div>
+              <div className="disp" style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.1 }}>Taxi Fleet Pro</div>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>Gestionare taxi</div>
+            </div>
+          </div>
+          {saveError && <div className="save-warn"><AlertTriangle size={14} />Salvarea a eșuat</div>}
+        </div>
+
+        <div className="tfp-nav">
+          {flatNav.map((n) => (
+            <button key={n.id} className={"tfp-navbtn" + (tab === n.id ? " active" : "")} onClick={() => !loading && setTab(n.id)}>
+              <n.icon size={15} />{n.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Titlul paginii curente — vizibil doar pe calculator, unde nu mai există header cu numele aplicației */}
+        {current && (
+          <div className="tfp-pageheader">
+            <div className="disp tfp-pagetitle">{current.label}</div>
+            {saveError && <div className="save-warn"><AlertTriangle size={14} />Salvarea a eșuat</div>}
+          </div>
+        )}
+
+        <div className="tfp-body">{children}</div>
+
+        <div className="tfp-footer">© {new Date().getFullYear()} Nichita Ivanov. Toate drepturile rezervate.</div>
       </div>
-
-      <div className="tfp-nav">
-        {nav.map((n) => (
-          <button key={n.id} className={"tfp-navbtn" + (tab === n.id ? " active" : "")} onClick={() => !loading && setTab(n.id)}>
-            <n.icon size={15} />{n.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="tfp-body">{children}</div>
-
-      <div className="tfp-footer">© {new Date().getFullYear()} Nichita Ivanov. Toate drepturile rezervate.</div>
     </div>
   );
 }
+
 
 /* ============================== DASHBOARD ============================== */
 
