@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Car, Users, Calendar as CalendarIcon, Wallet, BarChart3, Plus, X,
   Trash2, Pencil, Check, AlertTriangle, ChevronLeft, ChevronRight,
@@ -261,17 +261,32 @@ export default function TaxiFleetPro() {
     })();
   }, []);
 
+  const pendingSaveRef = useRef(null);
+  const savingRef = useRef(false);
+
   const persist = useCallback(async (next) => {
-    try {
-      const res = await fetch("/api/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(next),
-      });
-      setSaveError(!res.ok);
-    } catch {
-      setSaveError(true);
+    // Ținem minte mereu CEA MAI RECENTĂ stare de trimis. Dacă o cerere e deja
+    // în curs, noua stare așteaptă — nu pornim o a doua cerere în paralel.
+    // Așa nu mai există risc ca un răspuns "vechi" să ajungă după unul "nou"
+    // și să suprascrie date proaspăt introduse (exact bugul din Finanțe).
+    pendingSaveRef.current = next;
+    if (savingRef.current) return;
+    savingRef.current = true;
+    while (pendingSaveRef.current) {
+      const toSend = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+      try {
+        const res = await fetch("/api/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(toSend),
+        });
+        setSaveError(!res.ok);
+      } catch {
+        setSaveError(true);
+      }
     }
+    savingRef.current = false;
   }, []);
 
   const update = useCallback((fn) => {
