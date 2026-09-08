@@ -1911,6 +1911,7 @@ function IncomeForm({ onSave, onCancel }) {
 
 function EarningsView({ data, update }) {
   const [date, setDate] = useState(todayISO());
+  const [search, setSearch] = useState("");
   const [y, m, d] = date.split("-").map(Number);
   const year = y, month = m - 1, day = d;
   const ranges = weekRanges(year, month);
@@ -1958,6 +1959,17 @@ function EarningsView({ data, update }) {
   }, { cash: 0, card: 0 });
   const enteredCount = rows.filter((r) => !!r.dayRec).length;
 
+  const filteredRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(({ car, driver }) =>
+      (driver && driver.nume.toLowerCase().includes(q)) ||
+      car.nr.toLowerCase().includes(q) ||
+      (car.marca && car.marca.toLowerCase().includes(q)) ||
+      (car.model && car.model.toLowerCase().includes(q))
+    );
+  }, [rows, search]);
+
   const shiftDate = (delta) => {
     const dt = new Date(year, month, day + delta);
     setDate(`${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`);
@@ -1997,14 +2009,26 @@ function EarningsView({ data, update }) {
         <MiniStat label="Total azi" value={fmtMoney(totals.cash + totals.card)} color="var(--amber)" />
       </div>
 
+      <div className="field" style={{ position: "relative" }}>
+        <Search size={15} color="var(--muted)" style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Caută după șofer sau nr. înmatriculare…"
+          style={{ paddingLeft: 34 }}
+        />
+      </div>
+
       {rows.length === 0 ? (
         <div className="card"><EmptyState text="Nicio mașină cu șofer alocat. Alocă un șofer la o mașină (secțiunea Mașini) ca să apară aici." /></div>
+      ) : filteredRows.length === 0 ? (
+        <div className="card"><EmptyState text="Niciun rezultat pentru căutarea curentă." /></div>
       ) : (
         <div className="card" style={{ overflowX: "auto" }}>
           <table>
             <thead><tr><th>Șofer / Mașină</th><th>Stare</th><th>Numerar</th><th>Card</th><th>Total</th></tr></thead>
             <tbody>
-              {rows.map(({ car, driver, dayRec }) => {
+              {filteredRows.map(({ car, driver, dayRec }) => {
                 const worked = dayRec ? dayRec.worked !== false : true;
                 return (
                   <EarningsRow
@@ -2082,6 +2106,7 @@ function ReportsView({ data }) {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [filter, setFilter] = useState("toate");
+  const [search, setSearch] = useState("");
 
   const perCar = useMemo(() => {
     const rows = data.cars.filter((car) => car.driverId).map((car) => {
@@ -2099,10 +2124,20 @@ function ReportsView({ data }) {
   }, [data, year, month]);
 
   const filteredCars = useMemo(() => {
-    if (filter === "restanta") return perCar.filter((r) => r.rest > 0);
-    if (filter === "la_zi") return perCar.filter((r) => r.rest <= 0);
-    return perCar;
-  }, [perCar, filter]);
+    let out = perCar;
+    if (filter === "restanta") out = out.filter((r) => r.rest > 0);
+    if (filter === "la_zi") out = out.filter((r) => r.rest <= 0);
+    const q = search.trim().toLowerCase();
+    if (q) {
+      out = out.filter((r) =>
+        r.car.nr.toLowerCase().includes(q) ||
+        (r.driver && r.driver.nume.toLowerCase().includes(q)) ||
+        (r.car.marca && r.car.marca.toLowerCase().includes(q)) ||
+        (r.car.model && r.car.model.toLowerCase().includes(q))
+      );
+    }
+    return out;
+  }, [perCar, filter, search]);
 
   const totals = perCar.reduce((acc, r) => ({
     plan: acc.plan + r.plan,
@@ -2126,17 +2161,20 @@ function ReportsView({ data }) {
         <button className="btn" style={{ padding: 8 }} onClick={() => changeMonth(1)}><ChevronRight size={16} /></button>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px,1fr))", gap: 12, marginBottom: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px,1fr))", gap: 12, marginBottom: 10 }}>
         <MiniStat label="Total de recuperat" value={fmtMoney(totals.plan)} color="var(--amber)" />
         <MiniStat label="Adus total" value={fmtMoney(totals.paid)} color="var(--green)" />
         <MiniStat label="Restanțe total" value={fmtMoney(totals.rest)} color={totals.rest > 0 ? "var(--orange)" : "var(--muted)"} />
+      </div>
+      <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 18 }}>
+        „Total de recuperat" = chiria lunii curente + orice restanță neachitată din lunile anterioare, adunată automat.
       </div>
 
       {perCar.length === 0 ? (
         <div className="card"><EmptyState text="Nicio mașină cu șofer alocat momentan." /></div>
       ) : (
         <>
-          <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
             {[
               { id: "toate", label: `Toate (${perCar.length})` },
               { id: "restanta", label: `Cu restanță (${restanteCount})` },
@@ -2153,6 +2191,16 @@ function ReportsView({ data }) {
             ))}
           </div>
 
+          <div className="field" style={{ position: "relative" }}>
+            <Search size={15} color="var(--muted)" style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Caută după șofer sau nr. înmatriculare…"
+              style={{ paddingLeft: 34 }}
+            />
+          </div>
+
           {filteredCars.length === 0 ? (
             <div className="card"><EmptyState text="Nicio mașină în această categorie." /></div>
           ) : (
@@ -2161,7 +2209,7 @@ function ReportsView({ data }) {
                 <thead><tr><th>Mașină</th><th>Șofer</th><th>Total de recuperat</th><th>Adus</th><th>Rest</th><th>Stare</th></tr></thead>
                 <tbody>
                   {filteredCars.map(({ car, driver, planBase, plan, paid, rest, carryover, status }) => (
-                    <tr key={car.id}>
+                    <tr key={car.id} style={rest > 0 ? { boxShadow: "inset 3px 0 0 var(--orange)" } : undefined}>
                       <td style={{ fontWeight: 600 }}>{car.nr}</td>
                       <td>{driver ? driver.nume : <span style={{ color: "var(--muted)" }}>—</span>}</td>
                       <td className="mono">
