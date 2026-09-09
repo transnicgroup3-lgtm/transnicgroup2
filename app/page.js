@@ -37,7 +37,9 @@ const emptyData = () => ({
   cars: [],
   drivers: [],
   payments: {},        // legacy, unused
-  weeklyPayments: {},  // key `${y}-${mm}__${carId}__${weekIdx}` -> {year,month,carId,weekIdx,paidCash,paidCard,paidAmount}
+  weeklyPayments: {},  // key `${y}-${mm}__${ownerId}__${weekIdx}`. ownerId = șoferul alocat mașinii la momentul înregistrării
+                        // (sau id-ul mașinii, dacă nu are șofer alocat) -> {year,month,carId,driverId,weekIdx,paidCash,paidCard,paidAmount}
+  debtMigratedToDrivers: false, // devine true după ce restanțele vechi (legate de mașină) sunt migrate pe șofer
   expenses: [],
   incomes: [],
   insurances: [],
@@ -93,11 +95,53 @@ function fmtRate(car) {
   return car.tarifPeriod === "luna" ? `${fmtMoney(car.tarif)}/lună` : `${fmtMoney(car.tarif)}/zi`;
 }
 
-function weekKey(year, month, carId, weekIdx) { return `${year}-${String(month + 1).padStart(2, "0")}__${carId}__${weekIdx}`; }
-function weeklyRecord(data, year, month, carId, weekIdx) { return data.weeklyPayments[weekKey(year, month, carId, weekIdx)] || null; }
-function weeklyPaid(data, year, month, carId, weekIdx) {
-  const r = weeklyRecord(data, year, month, carId, weekIdx);
+function weekKey(year, month, ownerId, weekIdx) { return `${year}-${String(month + 1).padStart(2, "0")}__${ownerId}__${weekIdx}`; }
+function weeklyRecord(data, year, month, ownerId, weekIdx) { return data.weeklyPayments[weekKey(year, month, ownerId, weekIdx)] || null; }
+function weeklyPaid(data, year, month, ownerId, weekIdx) {
+  const r = weeklyRecord(data, year, month, ownerId, weekIdx);
   return r ? Number(r.paidAmount || 0) : 0;
+}
+// Restanța/plata se leagă de ȘOFER (persoană), nu de mașină: dacă mașina are
+// un șofer alocat acum, el e "proprietarul" datoriei. Dacă mașina nu are
+// niciun șofer alocat, rămâne provizoriu legată de mașină (ca să nu se piardă
+// date), până se alocă cineva.
+function debtOwnerId(car) {
+  return car.driverId || car.id;
+}
+// Migrare unică: mută restanțele vechi (legate de mașină) pe șoferul care
+// conduce acum acea mașină. Rulează o singură dată, la încărcare — vezi
+// TaxiFleetPro (useEffect) — și e ferită de rulare dublă prin flag-ul
+// debtMigratedToDrivers.
+function migrateDebtToDrivers(data) {
+  if (data.debtMigratedToDrivers) return data;
+  const wp = data.weeklyPayments || {};
+  const migrated = {};
+  Object.values(wp).forEach((rec) => {
+    if (!rec) return;
+    const oldCarId = rec.carId;
+    const car = data.cars.find((c) => c.id === oldCarId);
+    const ownerId = (car && car.driverId) || oldCarId;
+    const driverId = car && car.driverId ? car.driverId : null;
+    const k = weekKey(rec.year, rec.month, ownerId, rec.weekIdx);
+    const existing = migrated[k];
+    if (existing) {
+      // Coliziune rară: doi șoferi diferiți au adus deja bani în aceeași
+      // săptămână și ajung acum pe același "proprietar" — le adunăm ca să nu
+      // se piardă nimic.
+      const dailyAmounts = { ...(existing.dailyAmounts || {}), ...(rec.dailyAmounts || {}) };
+      migrated[k] = {
+        ...existing,
+        driverId: driverId || existing.driverId,
+        paidCash: Number(existing.paidCash || 0) + Number(rec.paidCash || 0),
+        paidCard: Number(existing.paidCard || 0) + Number(rec.paidCard || 0),
+        paidAmount: Number(existing.paidAmount || 0) + Number(rec.paidAmount || 0),
+        dailyAmounts,
+      };
+    } else {
+      migrated[k] = { ...rec, carId: oldCarId, driverId };
+    }
+  });
+  return { ...data, weeklyPayments: migrated, debtMigratedToDrivers: true };
 }
 function isCarActive(car) {
   return !car.status || car.status === "activa";
@@ -150,7 +194,7 @@ function unavailablePeriodOnDay(car, year, month, day) {
 function workingDaysEffective(data, car, year, month, weekIdx, ranges) {
   if (!isCarActive(car)) return 0;
   const r = ranges[weekIdx];
-  const rec = weeklyRecord(data, year, month, car.id, weekIdx);
+  const rec = weeklyRecord(data, year, month, debtOwnerId(car), weekIdx);
   let count = 0;
   for (let d = r.start; d <= r.end; d++) {
     const dayRec = rec && rec.dailyAmounts ? rec.dailyAmounts[d] : null;
@@ -174,15 +218,15 @@ function monthlyPlanBase(data, car, year, month) {
   for (let i = 0; i < ranges.length; i++) total += rate * workingDaysEffective(data, car, year, month, i, ranges);
   return total;
 }
-function monthlyPaid(data, year, month, carId) {
+function monthlyPaid(data, year, month, ownerId) {
   const ranges = weekRanges(year, month);
   let sum = 0;
-  for (let i = 0; i < ranges.length; i++) sum += weeklyPaid(data, year, month, carId, i);
+  for (let i = 0; i < ranges.length; i++) sum += weeklyPaid(data, year, month, ownerId, i);
   return sum;
 }
-function hasAnyRecordForMonth(data, year, month, carId) {
+function hasAnyRecordForMonth(data, year, month, ownerId) {
   const ranges = weekRanges(year, month);
-  for (let i = 0; i < ranges.length; i++) if (weeklyRecord(data, year, month, carId, i)) return true;
+  for (let i = 0; i < ranges.length; i++) if (weeklyRecord(data, year, month, ownerId, i)) return true;
   return false;
 }
 function prevMonth(year, month) { return month === 0 ? { year: year - 1, month: 11 } : { year, month: month - 1 }; }
@@ -196,9 +240,9 @@ function carryoverFromPrevMonth(data, car, year, month) {
     const lastDayPrevMonth = new Date(pm.year, pm.month, daysInMonth(pm.year, pm.month));
     if (lastDayPrevMonth < startOnly) return 0;
   }
-  if (!hasAnyRecordForMonth(data, pm.year, pm.month, car.id)) return 0;
+  if (!hasAnyRecordForMonth(data, pm.year, pm.month, debtOwnerId(car))) return 0;
   const plan = monthlyPlanWithCarry(data, car, pm.year, pm.month);
-  const paid = monthlyPaid(data, pm.year, pm.month, car.id);
+  const paid = monthlyPaid(data, pm.year, pm.month, debtOwnerId(car));
   return Math.max(plan - paid, 0);
 }
 function monthlyPlanWithCarry(data, car, year, month) {
@@ -208,6 +252,33 @@ function weekPlan(data, car, year, month, weekIdx, ranges) {
   if (!isCarActive(car)) return 0;
   const base = dailyRate(car, year, month) * workingDaysEffective(data, car, year, month, weekIdx, ranges);
   return weekIdx === 0 ? base + carryoverFromPrevMonth(data, car, year, month) : base;
+}
+
+// Restanța unui șofer nu trebuie să dispară doar pentru că nu mai conduce
+// nicio mașină acum (a fost mutat pe alta, sau a plecat). Funcția asta
+// adună restanțele rămase din toate înregistrările lui, indiferent de lună.
+function driverDebtsWithoutCar(data) {
+  const assignedDriverIds = new Set(data.cars.filter((c) => c.driverId).map((c) => c.driverId));
+  const byDriver = new Map(); // driverId -> total restanță
+  Object.values(data.weeklyPayments || {}).forEach((rec) => {
+    if (!rec) return;
+    const driverId = rec.driverId;
+    if (!driverId || assignedDriverIds.has(driverId)) return;
+    const driver = data.drivers.find((d) => d.id === driverId);
+    if (!driver) return;
+    const car = data.cars.find((c) => c.id === rec.carId);
+    if (!car) return;
+    const ranges = weekRanges(rec.year, rec.month);
+    const due = weekPlan(data, car, rec.year, rec.month, rec.weekIdx, ranges);
+    const paid = Number(rec.paidAmount || 0);
+    const rest = Math.max(due - paid, 0);
+    if (!rest) return;
+    byDriver.set(driverId, (byDriver.get(driverId) || 0) + rest);
+  });
+  return Array.from(byDriver.entries())
+    .map(([driverId, rest]) => ({ driver: data.drivers.find((d) => d.id === driverId), rest }))
+    .filter((r) => r.driver && r.rest > 0)
+    .sort((a, b) => b.rest - a.rest);
 }
 
 const DAY_NAMES_RO = ["Duminică", "Luni", "Marți", "Miercuri", "Joi", "Vineri", "Sâmbătă"];
@@ -226,8 +297,8 @@ function weekDays(car, year, month, weekIdx, ranges) {
 function dayLabel(year, month, day) {
   return `${DAY_NAMES_RO[new Date(year, month, day).getDay()].slice(0, 3)} ${day}`;
 }
-function weeklyMode(data, year, month, carId, weekIdx) {
-  const r = weeklyRecord(data, year, month, carId, weekIdx);
+function weeklyMode(data, year, month, ownerId, weekIdx) {
+  const r = weeklyRecord(data, year, month, ownerId, weekIdx);
   return r && r.mode === "daily" ? "daily" : "total";
 }
 function statusOf(due, paid) {
@@ -296,6 +367,44 @@ export default function TaxiFleetPro() {
       return next;
     });
   }, [persist]);
+
+  // Dacă ții aplicația deschisă simultan pe telefon și pe calculator (sau în
+  // mai multe tab-uri), tab-ul rămas mai mult timp în fundal poate avea date
+  // vechi în memorie — și, dacă faci acolo orice modificare, trimite ÎNTREG
+  // blob-ul vechi peste cel proaspăt salvat de pe celălalt dispozitiv (exact
+  // "restanța revine la suma veche"). Ca să reducem riscul, reîncărcăm datele
+  // de pe server automat de fiecare dată când revii pe tab-ul ăsta (dacă nu e
+  // deja o salvare în curs / în așteptare).
+  useEffect(() => {
+    const onFocus = async () => {
+      if (savingRef.current || pendingSaveRef.current) return;
+      try {
+        const res = await fetch("/api/data");
+        const json = await res.json();
+        if (json && json.data) setData({ ...emptyData(), ...json.data });
+      } catch {
+        // conexiune indisponibilă — păstrăm ce avem local
+      }
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") onFocus(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Migrare unică: restanțele care erau legate de mașină trec pe șoferul
+  // care conduce acum acea mașină. Rulează o singură dată (flag
+  // debtMigratedToDrivers) și salvează imediat rezultatul.
+  useEffect(() => {
+    if (!data || data.debtMigratedToDrivers) return;
+    const migrated = migrateDebtToDrivers(data);
+    setData(migrated);
+    persist(migrated);
+  }, [data, persist]);
 
   if (loading || !data) {
     return (
@@ -514,7 +623,7 @@ function Dashboard({ data, setTab }) {
   const inService = data.cars.filter((c) => c.status === "service").length;
 
   const weekRows = data.cars.map((c) => {
-    const rec = weeklyRecord(data, year, month, c.id, wIdx);
+    const rec = weeklyRecord(data, year, month, debtOwnerId(c), wIdx);
     const due = weekPlan(data, c, year, month, wIdx, ranges);
     const paid = rec ? rec.paidAmount : null;
     return { car: c, due, paid, status: statusOf(due, paid) };
@@ -546,7 +655,7 @@ function Dashboard({ data, setTab }) {
   const todayWeekIdx = currentWeekIndex(year, month, day, todayRanges);
   const carsWithDriver = data.cars.filter((c) => c.driverId && isCarActive(c));
   const missingTodayCount = carsWithDriver.filter((c) => {
-    const rec = weeklyRecord(data, year, month, c.id, todayWeekIdx);
+    const rec = weeklyRecord(data, year, month, debtOwnerId(c), todayWeekIdx);
     const dayRec = rec && rec.dailyAmounts ? rec.dailyAmounts[day] : null;
     return !dayRec;
   }).length;
@@ -970,6 +1079,9 @@ function WeeklyCalendarView({ data, update }) {
   }, [data.cars, search, driverFilter]);
 
   const changeMonth = (delta) => {
+    // Dacă mai ai un câmp de sumă activ (necomis încă), forțează salvarea lui
+    // înainte să schimbi luna — altfel valoarea abia introdusă se pierde.
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
     let m = month + delta, y = year;
     if (m < 0) { m = 11; y -= 1; }
     if (m > 11) { m = 0; y += 1; }
@@ -977,19 +1089,19 @@ function WeeklyCalendarView({ data, update }) {
   };
 
   const setWeekTotal = (car, weekIdx, cash, card) => {
-    const k = weekKey(year, month, car.id, weekIdx);
+    const k = weekKey(year, month, debtOwnerId(car), weekIdx);
     const paidAmount = Number(cash || 0) + Number(card || 0);
     update((prev) => ({
       ...prev,
       weeklyPayments: {
         ...prev.weeklyPayments,
-        [k]: { ...(prev.weeklyPayments[k] || {}), year, month, carId: car.id, weekIdx, mode: "total", paidCash: Number(cash || 0), paidCard: Number(card || 0), paidAmount },
+        [k]: { ...(prev.weeklyPayments[k] || {}), year, month, carId: car.id, driverId: car.driverId || null, weekIdx, mode: "total", paidCash: Number(cash || 0), paidCard: Number(card || 0), paidAmount },
       },
     }));
   };
 
   const setWeekMode = (car, weekIdx, mode) => {
-    const k = weekKey(year, month, car.id, weekIdx);
+    const k = weekKey(year, month, debtOwnerId(car), weekIdx);
     update((prev) => {
       const existing = prev.weeklyPayments[k];
       let rec;
@@ -1017,16 +1129,16 @@ function WeeklyCalendarView({ data, update }) {
           }
         }
       } else {
-        rec = { year, month, carId: car.id, weekIdx, mode, paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
+        rec = { year, month, carId: car.id, driverId: car.driverId || null, weekIdx, mode, paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
       }
       return { ...prev, weeklyPayments: { ...prev.weeklyPayments, [k]: rec } };
     });
   };
 
   const setWeekDay = (car, weekIdx, day, entry) => {
-    const k = weekKey(year, month, car.id, weekIdx);
+    const k = weekKey(year, month, debtOwnerId(car), weekIdx);
     update((prev) => {
-      const existing = prev.weeklyPayments[k] || { year, month, carId: car.id, weekIdx, mode: "daily", paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
+      const existing = prev.weeklyPayments[k] || { year, month, carId: car.id, driverId: car.driverId || null, weekIdx, mode: "daily", paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
       const prevDay = (existing.dailyAmounts || {})[day] || {};
       const merged = { worked: true, cash: 0, card: 0, note: "", ...prevDay, ...entry };
       if (!merged.worked) { merged.cash = 0; merged.card = 0; }
@@ -1034,7 +1146,7 @@ function WeeklyCalendarView({ data, update }) {
       const paidCash = Object.values(dailyAmounts).reduce((s, d) => s + (d.worked === false ? 0 : Number(d.cash || 0)), 0);
       const paidCard = Object.values(dailyAmounts).reduce((s, d) => s + (d.worked === false ? 0 : Number(d.card || 0)), 0);
       const paidAmount = paidCash + paidCard;
-      const rec = { ...existing, year, month, carId: car.id, weekIdx, mode: "daily", dailyAmounts, paidCash, paidCard, paidAmount };
+      const rec = { ...existing, year, month, carId: car.id, driverId: car.driverId || null, weekIdx, mode: "daily", dailyAmounts, paidCash, paidCard, paidAmount };
       return { ...prev, weeklyPayments: { ...prev.weeklyPayments, [k]: rec } };
     });
   };
@@ -1110,7 +1222,7 @@ function WeeklyCalendarView({ data, update }) {
 function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expanded, onToggle, onSetWeekTotal, onSetWeekMode, onSetWeekDay, onSetStartDate, onSetStatus }) {
   const carryover = carryoverFromPrevMonth(data, car, year, month);
   const planTotal = monthlyPlanWithCarry(data, car, year, month);
-  const paidTotal = monthlyPaid(data, year, month, car.id);
+  const paidTotal = monthlyPaid(data, year, month, debtOwnerId(car));
   const restTotal = Math.max(planTotal - paidTotal, 0);
   const rowStatus = restTotal <= 0 ? "paid" : paidTotal > 0 ? "partial" : "unpaid";
   const [editingStart, setEditingStart] = useState(false);
@@ -1230,7 +1342,7 @@ function CarWeekCard({ car, data, year, month, ranges, todayIdx, driver, expande
 }
 
 function WeekRow({ car, data, year, month, weekIdx, range, ranges, isCurrent, onSetTotal, onSetMode, onSetDay }) {
-  const rec = weeklyRecord(data, year, month, car.id, weekIdx);
+  const rec = weeklyRecord(data, year, month, debtOwnerId(car), weekIdx);
   const plan = weekPlan(data, car, year, month, weekIdx, weekRanges(year, month));
   const mode = rec && rec.mode === "daily" ? "daily" : "total";
   const [cash, setCash] = useState(rec ? rec.paidCash : "");
@@ -1274,10 +1386,10 @@ function WeekRow({ car, data, year, month, weekIdx, range, ranges, isCurrent, on
       {mode === "total" ? (
         <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
           <div style={{ width: 90 }}>
-            <input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commitTotal} />
+            <input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commitTotal} onKeyDown={(e) => e.key === "Enter" && e.target.blur()} />
           </div>
           <div style={{ width: 90 }}>
-            <input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commitTotal} />
+            <input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commitTotal} onKeyDown={(e) => e.key === "Enter" && e.target.blur()} />
           </div>
         </div>
       ) : (
@@ -1343,8 +1455,8 @@ function DayRow({ car, year, month, day, rec, onSetDay }) {
       {worked ? (
         <div style={{ marginTop: 6, marginLeft: 70 }}>
           <div style={{ display: "flex", gap: 8 }}>
-            <input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commitAmounts} />
-            <input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commitAmounts} />
+            <input type="number" placeholder="Numerar" value={cash} onChange={(e) => setCash(e.target.value)} onBlur={commitAmounts} onKeyDown={(e) => e.key === "Enter" && e.target.blur()} />
+            <input type="number" placeholder="Card" value={card} onChange={(e) => setCard(e.target.value)} onBlur={commitAmounts} onKeyDown={(e) => e.key === "Enter" && e.target.blur()} />
           </div>
           <div style={{ marginTop: 6 }}>
             <input
@@ -1647,7 +1759,7 @@ function FinanceView({ data, update }) {
 const restante = data.cars.reduce((s, car) => {
   if (!car.driverId) return s; // doar mașini cu șofer alocat momentan
   const plan = monthlyPlanBase(data, car, year, month); // fără moștenire din lunile trecute — pornește curat, de azi
-  const paid = monthlyPaid(data, year, month, car.id);
+  const paid = monthlyPaid(data, year, month, debtOwnerId(car));
   return s + Math.max(plan - paid, 0);
 }, 0);
 
@@ -1928,9 +2040,9 @@ function EarningsView({ data, update }) {
   }, [data.cars, data.drivers]);
 
   const setDay = (car, entry) => {
-    const k = weekKey(year, month, car.id, weekIdx);
+    const k = weekKey(year, month, debtOwnerId(car), weekIdx);
     update((prev) => {
-      const existing = prev.weeklyPayments[k] || { year, month, carId: car.id, weekIdx, mode: "daily", paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
+      const existing = prev.weeklyPayments[k] || { year, month, carId: car.id, driverId: car.driverId || null, weekIdx, mode: "daily", paidCash: 0, paidCard: 0, paidAmount: 0, dailyAmounts: {} };
       const prevDay = (existing.dailyAmounts || {})[day] || {};
       const merged = { worked: true, cash: 0, card: 0, note: "", ...prevDay, ...entry };
       if (!merged.worked) { merged.cash = 0; merged.card = 0; }
@@ -1938,13 +2050,13 @@ function EarningsView({ data, update }) {
       const paidCash = Object.values(dailyAmounts).reduce((s, dd) => s + (dd.worked === false ? 0 : Number(dd.cash || 0)), 0);
       const paidCard = Object.values(dailyAmounts).reduce((s, dd) => s + (dd.worked === false ? 0 : Number(dd.card || 0)), 0);
       const paidAmount = paidCash + paidCard;
-      const rec = { ...existing, year, month, carId: car.id, weekIdx, mode: "daily", dailyAmounts, paidCash, paidCard, paidAmount };
+      const rec = { ...existing, year, month, carId: car.id, driverId: car.driverId || null, weekIdx, mode: "daily", dailyAmounts, paidCash, paidCard, paidAmount };
       return { ...prev, weeklyPayments: { ...prev.weeklyPayments, [k]: rec } };
     });
   };
 
   const rows = cars.map((car) => {
-    const rec = weeklyRecord(data, year, month, car.id, weekIdx);
+    const rec = weeklyRecord(data, year, month, debtOwnerId(car), weekIdx);
     const dayRec = rec && rec.dailyAmounts ? rec.dailyAmounts[day] : null;
     const driver = data.drivers.find((dd) => dd.id === car.driverId);
     return { car, driver, dayRec };
@@ -1980,9 +2092,9 @@ function EarningsView({ data, update }) {
     const map = new Map(); // driverId -> total
     Object.values(data.weeklyPayments).forEach((rec) => {
       if (rec.year !== year || rec.month !== month || rec.mode !== "daily" || !rec.dailyAmounts) return;
-      const car = data.cars.find((c) => c.id === rec.carId);
-      if (!car || !car.driverId) return;
-      const driver = data.drivers.find((dr) => dr.id === car.driverId);
+      const driverId = rec.driverId || (data.cars.find((c) => c.id === rec.carId) || {}).driverId;
+      if (!driverId) return;
+      const driver = data.drivers.find((dr) => dr.id === driverId);
       if (!driver) return;
       let sum = 0;
       Object.values(rec.dailyAmounts).forEach((dd) => { if (dd.worked !== false) sum += Number(dd.cash || 0) + Number(dd.card || 0); });
@@ -2112,7 +2224,7 @@ function ReportsView({ data }) {
     const rows = data.cars.filter((car) => car.driverId).map((car) => {
       const planBase = monthlyPlanBase(data, car, year, month);
       const plan = monthlyPlanWithCarry(data, car, year, month);
-      const paid = monthlyPaid(data, year, month, car.id);
+      const paid = monthlyPaid(data, year, month, debtOwnerId(car));
       const carryover = carryoverFromPrevMonth(data, car, year, month);
       const driver = data.drivers.find((d) => d.id === car.driverId);
       const rest = Math.max(plan - paid, 0);
@@ -2145,6 +2257,7 @@ function ReportsView({ data }) {
     rest: acc.rest + r.rest,
   }), { plan: 0, paid: 0, rest: 0 });
   const restanteCount = perCar.filter((r) => r.rest > 0).length;
+  const orphanDebts = useMemo(() => driverDebtsWithoutCar(data), [data]);
 
   const changeMonth = (delta) => {
     let m = month + delta, y = year;
@@ -2169,6 +2282,28 @@ function ReportsView({ data }) {
       <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 18 }}>
         „Total de recuperat" = chiria lunii curente + orice restanță neachitată din lunile anterioare, adunată automat.
       </div>
+
+      {orphanDebts.length > 0 && (
+        <div className="card" style={{ borderColor: "#e5484d55", marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }} className="disp">
+            <AlertTriangle size={15} color="var(--red)" /> Șoferi cu restanță, fără mașină alocată acum
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 10 }}>
+            Au rămas cu datorie de pe o mașină pe care nu o mai conduc — nu apar în tabelul de mai jos, dar tot o datorează.
+          </div>
+          <table>
+            <thead><tr><th>Șofer</th><th>Restanță</th></tr></thead>
+            <tbody>
+              {orphanDebts.map(({ driver, rest }) => (
+                <tr key={driver.id}>
+                  <td>{driver.nume}</td>
+                  <td className="mono" style={{ color: "var(--orange)", fontWeight: 700 }}>{fmtMoney(rest)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {perCar.length === 0 ? (
         <div className="card"><EmptyState text="Nicio mașină cu șofer alocat momentan." /></div>
